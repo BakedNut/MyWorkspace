@@ -106,7 +106,7 @@ export const mockApi: ApiClient = {
       const cals = calendars();
       const classes: TodayItem[] = expandTimetable(timetable(), date, date).map((c) => ({
         kind: "class",
-        id: `${c.courseId}-${c.date}`,
+        id: `${c.courseId}-${c.date}-${c.start}`,
         title: c.name,
         start: c.start,
         end: c.end,

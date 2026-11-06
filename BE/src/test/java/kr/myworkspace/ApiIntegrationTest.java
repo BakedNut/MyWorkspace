@@ -24,6 +24,61 @@ import tools.jackson.databind.json.JsonMapper;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class ApiIntegrationTest {
+  @Test
+  @org.springframework.transaction.annotation.Transactional
+  void oneCourseSupportsSplitTimesAndIndependentCancellations() throws Exception {
+    var table =
+        new Timetable(
+            java.time.LocalDate.parse("2026-09-01"),
+            java.time.LocalDate.parse("2026-12-31"),
+            List.of(
+                new Course(
+                    "split",
+                    "TCP/IP",
+                    "6406",
+                    "교수",
+                    1,
+                    "09:00",
+                    "10:00",
+                    List.of(),
+                    List.of(
+                        new CourseTime("afternoon", 1, "15:00", "16:00", null, List.of()),
+                        new CourseTime(
+                            "wednesday",
+                            3,
+                            "11:00",
+                            "12:00",
+                            null,
+                            List.of(java.time.LocalDate.parse("2026-11-11")))))));
+    mvc.perform(
+            put("/api/timetable")
+                .header(Security.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(table)))
+        .andExpect(status().isOk());
+    var monday =
+        mvc.perform(get("/api/today?date=2026-11-09").header(Security.CLIENT_HEADER, LAN))
+            .andExpect(status().isOk())
+            .andReturn();
+    var rows = json.readTree(monday.getResponse().getContentAsString());
+    assertThat(rows.size()).isEqualTo(2);
+    assertThat(rows.get(0).path("id").asText()).isNotEqualTo(rows.get(1).path("id").asText());
+    mvc.perform(get("/api/today?date=2026-11-11").header(Security.CLIENT_HEADER, LAN))
+        .andExpect(status().isOk())
+        .andExpect(content().json("[]"));
+    String invalid = json.writeValueAsString(table).replace("15:00", "09:30");
+    mvc.perform(
+            put("/api/timetable")
+                .header(Security.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content(invalid))
+        .andExpect(status().isBadRequest());
+    assertThat(docs.read("timetable", Timetable.class).courses().getFirst().additionalTimes())
+        .hasSize(2);
+  }
+
   @Autowired MockMvc mvc;
   @Autowired JsonMapper json;
   @Autowired Documents docs;

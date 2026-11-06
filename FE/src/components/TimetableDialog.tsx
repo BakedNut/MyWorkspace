@@ -13,68 +13,20 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isValidTimeRange } from "@/lib/schedule";
+import { courseBlocks, courseTimes, isValidTimeRange } from "@/lib/schedule";
 import { WEEKDAYS, formatShort, toMinutes } from "@/lib/time";
 import {
   courseAt,
+  groupExistingCourses,
   timetableDays,
   timetableRange,
   timetableTime,
   validateTimetable,
 } from "@/lib/timetable";
 import { cn } from "@/lib/utils";
-import type { Course, Timetable } from "@/types/domain";
+import type { Course, CourseTime, Timetable } from "@/types/domain";
 import { selectClass } from "./EventDialog";
-
-function TimetableTimeSelect({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange(value: string): void;
-}) {
-  const [hour = "00", minute = "00"] = value.split(":");
-  return (
-    <fieldset className="grid grid-cols-[2rem_1fr_1fr] items-center gap-2">
-      <legend className="sr-only">{label} 시간</legend>
-      <span aria-hidden className="text-sm">
-        {label}
-      </span>
-      <select
-        aria-label={`${label} 시`}
-        className={selectClass}
-        value={hour}
-        onChange={(e) => onChange(`${e.target.value}:${minute}`)}
-      >
-        {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => (
-          <option key={h} value={h}>
-            {h}시
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label={`${label} 분`}
-        className={selectClass}
-        value={minute}
-        onChange={(e) => onChange(`${hour}:${e.target.value}`)}
-      >
-        {/* Preserve previously saved times without silently rounding them. */}
-        {Number(minute) % 5 !== 0 && (
-          <option value={minute} disabled>
-            {minute}분 (기존)
-          </option>
-        )}
-        {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0")).map((m) => (
-          <option key={m} value={m}>
-            {m}분
-          </option>
-        ))}
-      </select>
-    </fieldset>
-  );
-}
+import { TimeSelect } from "./TimeSelect";
 
 export function TimetableDialog({
   open,
@@ -91,6 +43,8 @@ export function TimetableDialog({
   const editor = useRef<HTMLElement>(null);
   const [form, setForm] = useState<Timetable | null>(null);
   const [selectedId, setSelectedId] = useState("");
+  const [timeId, setTimeId] = useState("primary");
+  const [mergedCount, setMergedCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [pendingCancel, setPendingCancel] = useState("");
 
@@ -99,7 +53,11 @@ export function TimetableDialog({
     else if (timetable && !initialized.current) {
       // Background refetches must not replace an open, unsaved draft.
       initialized.current = true;
-      setForm(structuredClone(timetable));
+      const copy = structuredClone(timetable);
+      copy.courses = groupExistingCourses(copy.courses);
+      setMergedCount(timetable.courses.length - copy.courses.length);
+      setForm(copy);
+      setTimeId("primary");
       setSelectedId(timetable.courses[0]?.id ?? "");
       setPendingCancel("");
       setError(null);
@@ -117,14 +75,18 @@ export function TimetableDialog({
 
   if (!form) return null;
   const selected = form.courses.find((c) => c.id === selectedId);
+  const selectedTime = selected
+    ? (courseTimes(selected).find((time) => time.id === timeId) ?? courseTimes(selected)[0]!)
+    : undefined;
   const days = timetableDays(form.courses);
   const range = timetableRange(form.courses);
   const slots = Array.from(
     { length: (range.end - range.start) / 30 },
     (_, i) => range.start + i * 30,
   );
-  const choose = (id: string) => {
+  const choose = (id: string, meetingId = "primary") => {
     setSelectedId(id);
+    setTimeId(meetingId);
     setPendingCancel("");
     if (window.innerWidth < 1024)
       requestAnimationFrame(() =>
@@ -141,9 +103,52 @@ export function TimetableDialog({
         },
     );
   };
+  const updateTime = (patch: Partial<CourseTime>) => {
+    if (!selected || !selectedTime) return;
+    if (selectedTime.id === "primary") updateCourse(patch);
+    else
+      updateCourse({
+        additionalTimes: (selected.additionalTimes ?? []).map((time) =>
+          time.id === selectedTime.id ? { ...time, ...patch } : time,
+        ),
+      });
+  };
+  const addTime = () => {
+    if (!selected || !selectedTime) return;
+    const time: CourseTime = {
+      id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      weekday: (selectedTime.weekday + 1) % 7,
+      start: selectedTime.start,
+      end: selectedTime.end,
+      cancelledDates: [],
+    };
+    updateCourse({ additionalTimes: [...(selected.additionalTimes ?? []), time] });
+    setTimeId(time.id);
+    setPendingCancel("");
+  };
+  const removeTime = () => {
+    if (!selected || !selectedTime) return;
+    const additional = selected.additionalTimes ?? [];
+    if (selectedTime.id === "primary") {
+      const [first, ...remaining] = additional;
+      if (!first) return;
+      const room = first.room || selected.room;
+      updateCourse({
+        weekday: first.weekday,
+        start: first.start,
+        end: first.end,
+        room,
+        cancelledDates: first.cancelledDates ?? [],
+        additionalTimes: remaining.map((time) => ({ ...time, room: time.room || selected.room })),
+      });
+    } else
+      updateCourse({ additionalTimes: additional.filter((time) => time.id !== selectedTime.id) });
+    setTimeId("primary");
+    setPendingCancel("");
+  };
   const addCourse = (weekday = 1, minutes = 9 * 60, selectExisting = false) => {
     const existing = courseAt(form.courses, weekday, minutes);
-    if (selectExisting && existing) return choose(existing.id);
+    if (selectExisting && existing) return choose(existing.id, existing.meetingId);
     const course: Course = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: "",
@@ -219,11 +224,16 @@ export function TimetableDialog({
             </div>
             <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
               <section className="min-w-0" aria-label="주간 시간표">
+                {mergedCount > 0 && (
+                  <p role="status" className="mb-2 text-xs text-primary">
+                    같은 과목의 시간을 하나의 수업으로 묶었습니다. 시간표를 저장하면 적용됩니다.
+                  </p>
+                )}
                 <div className="mb-2 flex items-center justify-between text-sm">
                   <h3 className="font-semibold">
                     주간 시간표{" "}
                     <span className="ml-1 font-normal text-muted-foreground">
-                      {form.courses.length}개 수업
+                      {form.courses.length}개 수업 · {courseBlocks(form.courses).length}개 시간
                     </span>
                   </h3>
                   <span className="text-xs text-muted-foreground">5분 단위 선택</span>
@@ -284,13 +294,13 @@ export function TimetableDialog({
                         />
                       )),
                     )}
-                    {form.courses
+                    {courseBlocks(form.courses)
                       .filter((c) => isValidTimeRange(c.start, c.end))
                       .map((c) => (
                         <button
-                          key={c.id}
+                          key={`${c.id}-${c.meetingId}`}
                           type="button"
-                          onClick={() => choose(c.id)}
+                          onClick={() => choose(c.id, c.meetingId)}
                           aria-pressed={selectedId === c.id}
                           aria-label={`${WEEKDAYS[c.weekday]}요일 ${c.name || "새 수업"} ${c.start}~${c.end} 수정`}
                           title={`${c.name || "새 수업"}${c.room ? ` (${c.room})` : ""}\n${c.professor ?? ""}\n${c.start}~${c.end}`}
@@ -347,13 +357,13 @@ export function TimetableDialog({
                       {!selected && <option value="">수업을 선택하세요</option>}
                       {form.courses.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {WEEKDAYS[c.weekday]} {c.start} · {c.name || "새 수업"}
+                          {c.name || "새 수업"} · {courseTimes(c).length}개 시간
                         </option>
                       ))}
                     </select>
                   </div>
                 )}
-                {selected ? (
+                {selected && selectedTime ? (
                   <>
                     <div className="space-y-1.5">
                       <Label htmlFor={`${uid}-name`}>과목명</Label>
@@ -384,13 +394,51 @@ export function TimetableDialog({
                         />
                       </div>
                     </div>
+                    <div className="space-y-2 border-t pt-3">
+                      <Label htmlFor={`${uid}-time`}>수업 시간</Label>
+                      <select
+                        id={`${uid}-time`}
+                        className={selectClass}
+                        value={selectedTime.id}
+                        onChange={(e) => {
+                          setTimeId(e.target.value);
+                          setPendingCancel("");
+                        }}
+                      >
+                        {courseTimes(selected).map((time, index) => (
+                          <option key={time.id} value={time.id}>
+                            시간 {index + 1} · {WEEKDAYS[time.weekday]} {time.start}~{time.end}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={(selected.additionalTimes?.length ?? 0) >= 20}
+                          onClick={addTime}
+                        >
+                          <Plus aria-hidden /> 시간 추가
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={!selected.additionalTimes?.length}
+                          onClick={removeTime}
+                        >
+                          이 시간 삭제
+                        </Button>
+                      </div>
+                    </div>
                     <div className="space-y-1.5">
                       <Label htmlFor={`${uid}-day`}>요일</Label>
                       <select
                         id={`${uid}-day`}
                         className={selectClass}
-                        value={selected.weekday}
-                        onChange={(e) => updateCourse({ weekday: Number(e.target.value) })}
+                        value={selectedTime.weekday}
+                        onChange={(e) => updateTime({ weekday: Number(e.target.value) })}
                       >
                         {[1, 2, 3, 4, 5, 6, 0].map((day) => (
                           <option key={day} value={day}>
@@ -400,24 +448,41 @@ export function TimetableDialog({
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <TimetableTimeSelect
+                      <TimeSelect
                         label="시작"
-                        value={selected.start}
-                        onChange={(start) => updateCourse({ start })}
+                        value={selectedTime.start}
+                        onChange={(start) => updateTime({ start })}
                       />
-                      <TimetableTimeSelect
+                      <TimeSelect
                         label="종료"
-                        value={selected.end}
-                        onChange={(end) => updateCourse({ end })}
+                        value={selectedTime.end}
+                        onChange={(end) => updateTime({ end })}
                       />
                     </div>
+                    {selectedTime.id !== "primary" && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`${uid}-time-room`}>이 시간의 강의실</Label>
+                        <Input
+                          id={`${uid}-time-room`}
+                          value={
+                            selected.additionalTimes?.find((time) => time.id === selectedTime.id)
+                              ?.room ?? ""
+                          }
+                          placeholder={selected.room || "기본 강의실 사용"}
+                          onChange={(event) => updateTime({ room: event.target.value })}
+                        />
+                      </div>
+                    )}
                     <div className="space-y-2 border-t pt-3">
                       <Label htmlFor={`${uid}-cancel`}>휴강일</Label>
+                      <p className="text-xs text-muted-foreground">
+                        선택한 수업 시간에만 적용됩니다.
+                      </p>
                       <div className="flex flex-wrap gap-1.5 text-xs">
-                        {selected.cancelledDates.length === 0 && (
+                        {selectedTime.cancelledDates.length === 0 && (
                           <span className="text-muted-foreground">등록된 휴강일 없음</span>
                         )}
-                        {selected.cancelledDates.map((d) => (
+                        {selectedTime.cancelledDates.map((d) => (
                           <span
                             key={d}
                             className="inline-flex items-center rounded-md bg-muted pl-2"
@@ -428,8 +493,10 @@ export function TimetableDialog({
                               className="rounded p-2 hover:bg-accent"
                               aria-label={`${formatShort(d)} 휴강 취소`}
                               onClick={() =>
-                                updateCourse({
-                                  cancelledDates: selected.cancelledDates.filter((x) => x !== d),
+                                updateTime({
+                                  cancelledDates: selectedTime.cancelledDates.filter(
+                                    (x) => x !== d,
+                                  ),
                                 })
                               }
                             >
@@ -457,9 +524,12 @@ export function TimetableDialog({
                           pendingCancel > form.semesterEnd
                         }
                         onClick={() => {
-                          if (!selected.cancelledDates.includes(pendingCancel))
-                            updateCourse({
-                              cancelledDates: [...selected.cancelledDates, pendingCancel].sort(),
+                          if (!selectedTime.cancelledDates.includes(pendingCancel))
+                            updateTime({
+                              cancelledDates: [
+                                ...selectedTime.cancelledDates,
+                                pendingCancel,
+                              ].sort(),
                             });
                           setPendingCancel("");
                         }}

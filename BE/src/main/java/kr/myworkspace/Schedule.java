@@ -70,12 +70,49 @@ record Course(
     @Min(0) @Max(6) int weekday,
     @NotBlank String start,
     @NotBlank String end,
-    @NotNull @Size(max = 400) List<@NotNull LocalDate> cancelledDates) {}
+    @NotNull @Size(max = 400) List<@NotNull LocalDate> cancelledDates,
+    @Size(max = 20) List<@NotNull @Valid CourseTime> additionalTimes) {
+  Course(
+      String id,
+      String name,
+      String room,
+      String professor,
+      int weekday,
+      String start,
+      String end,
+      List<LocalDate> cancelledDates) {
+    this(id, name, room, professor, weekday, start, end, cancelledDates, null);
+  }
+
+  List<CourseTime> times() {
+    List<CourseTime> result = new ArrayList<>();
+    result.add(new CourseTime("primary", weekday, start, end, room, cancelledDates));
+    if (additionalTimes != null)
+      for (var time : additionalTimes)
+        result.add(
+            new CourseTime(
+                time.id(),
+                time.weekday(),
+                time.start(),
+                time.end(),
+                time.room() == null || time.room().isBlank() ? room : time.room(),
+                time.cancelledDates() == null ? List.of() : time.cancelledDates()));
+    return result;
+  }
+}
+
+record CourseTime(
+    @NotBlank @Size(max = 64) String id,
+    @Min(0) @Max(6) int weekday,
+    @NotBlank String start,
+    @NotBlank String end,
+    @Size(max = 100) String room,
+    @Size(max = 400) List<@NotNull LocalDate> cancelledDates) {}
 
 record Timetable(
     @NotNull LocalDate semesterStart,
     @NotNull LocalDate semesterEnd,
-    @NotNull @Size(max = 100) List<@Valid Course> courses) {}
+    @NotNull @Size(max = 100) List<@NotNull @Valid Course> courses) {}
 
 @Service
 class ScheduleService {
@@ -197,20 +234,26 @@ class ScheduleService {
             && !table.semesterEnd().isAfter(table.semesterStart().plusYears(1)),
         "학기 기간을 확인하세요.");
     Set<String> ids = new HashSet<>();
-    for (int i = 0; i < table.courses().size(); i++) {
-      Course c = table.courses().get(i);
-      timeRange(c.start(), c.end());
+    List<CourseTime> previous = new ArrayList<>();
+    for (Course c : table.courses()) {
       ApiException.require(ids.add(c.id()), "수업 식별자가 중복됩니다.");
-      ApiException.require(
-          c.cancelledDates().stream()
-              .allMatch(d -> !d.isBefore(table.semesterStart()) && !d.isAfter(table.semesterEnd())),
-          "휴강일은 학기 기간 안에 지정하세요.");
-      for (Course other : table.courses().subList(0, i))
+      Set<String> timeIds = new HashSet<>();
+      for (var time : c.times()) {
+        ApiException.require(timeIds.add(time.id()), "수업 시간 식별자가 중복됩니다.");
+        timeRange(time.start(), time.end());
         ApiException.require(
-            other.weekday() != c.weekday()
-                || c.start().compareTo(other.end()) >= 0
-                || other.start().compareTo(c.end()) >= 0,
-            "같은 요일의 수업 시간이 겹칩니다.");
+            time.cancelledDates().stream()
+                .allMatch(
+                    d -> !d.isBefore(table.semesterStart()) && !d.isAfter(table.semesterEnd())),
+            "휴강일은 학기 기간 안에 지정하세요.");
+        for (CourseTime other : previous)
+          ApiException.require(
+              other.weekday() != time.weekday()
+                  || time.start().compareTo(other.end()) >= 0
+                  || other.start().compareTo(time.end()) >= 0,
+              "같은 요일의 수업 시간이 겹칩니다.");
+        previous.add(time);
+      }
     }
     docs.write(docs.lock("timetable"), table);
     return table;
@@ -238,21 +281,23 @@ class ScheduleService {
     Timetable t = timetable();
     if (!date.isBefore(t.semesterStart()) && !date.isAfter(t.semesterEnd()))
       for (Course c : t.courses())
-        if (c.weekday() == date.getDayOfWeek().getValue() % 7 && !c.cancelledDates().contains(date))
-          result.add(
-              Map.of(
-                  "kind",
-                  "class",
-                  "id",
-                  c.id() + "-" + date,
-                  "title",
-                  c.name(),
-                  "start",
-                  c.start(),
-                  "end",
-                  c.end(),
-                  "room",
-                  c.room() == null ? "" : c.room()));
+        for (CourseTime time : c.times())
+          if (time.weekday() == date.getDayOfWeek().getValue() % 7
+              && !time.cancelledDates().contains(date))
+            result.add(
+                Map.of(
+                    "kind",
+                    "class",
+                    "id",
+                    c.id() + "-" + time.id() + "-" + date,
+                    "title",
+                    c.name(),
+                    "start",
+                    time.start(),
+                    "end",
+                    time.end(),
+                    "room",
+                    time.room() == null ? "" : time.room()));
     result.sort(
         Comparator.comparing(
             i ->

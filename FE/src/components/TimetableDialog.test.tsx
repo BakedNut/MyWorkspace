@@ -38,6 +38,23 @@ afterEach(() => {
 });
 
 describe("시간표 표 편집 모달", () => {
+  it("한 수업에 다른 요일의 시간을 추가하고 이름을 함께 수정한다", async () => {
+    const save = vi.spyOn(api.timetable, "save").mockResolvedValue(timetable);
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "시간 추가" }));
+    fireEvent.change(screen.getByLabelText("요일", { exact: true }), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("과목명"), { target: { value: "TCP/IP" } });
+    fireEvent.click(screen.getByRole("button", { name: "시간표 저장" }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    const courses = save.mock.calls[0]?.[0].courses;
+    expect(courses).toHaveLength(1);
+    expect(courses?.[0]).toMatchObject({
+      name: "TCP/IP",
+      weekday: 2,
+      cancelledDates: ["2026-11-10"],
+      additionalTimes: [expect.objectContaining({ weekday: 4, start: "09:00", end: "11:50" })],
+    });
+  });
   it("빈 칸에서 수업을 만들어 교수명·분 단위 시간과 기존 휴강일을 저장한다", async () => {
     const save = vi.spyOn(api.timetable, "save").mockResolvedValue(timetable);
     const { onOpenChange } = setup();

@@ -20,6 +20,30 @@ const timetable: Timetable = {
 };
 
 describe("서울 날짜와 학기별 수업", () => {
+  it("한 과목의 여러 시간과 각 시간의 휴강일을 펼친다", () => {
+    const multi: Timetable = {
+      ...timetable,
+      courses: [
+        {
+          ...timetable.courses[0]!,
+          additionalTimes: [
+            {
+              id: "afternoon",
+              weekday: 5,
+              start: "15:00",
+              end: "16:00",
+              cancelledDates: ["2026-11-06"],
+            },
+          ],
+        },
+      ],
+    };
+    const classes = expandTimetable(multi, "2026-11-06", "2026-11-13");
+    expect(classes.map((c) => [c.date, c.start])).toEqual([
+      ["2026-11-06", "09:00"],
+      ["2026-11-13", "15:00"],
+    ]);
+  });
   it("다른 시간대에서도 서울의 자정 경계를 사용한다", () => {
     expect(seoulParts(new Date("2026-11-05T14:59:59Z"))).toMatchObject({
       dateKey: "2026-11-05",

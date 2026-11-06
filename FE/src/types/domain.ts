@@ -12,7 +12,6 @@ export interface Session {
   authenticated: true;
   expiresAt: string; // ISO
 }
-
 // ---------- /api/calendar ----------
 export type CalendarSource = "icloud" | "local" | "holiday";
 export type CalendarColor = "icloud" | "personal" | "holiday" | "school";
@@ -69,6 +68,16 @@ export interface Course {
   start: TimeHM;
   end: TimeHM;
   cancelledDates: DateKey[]; // 휴강일
+  additionalTimes?: CourseTime[];
+}
+
+export interface CourseTime {
+  id: string;
+  weekday: number;
+  start: TimeHM;
+  end: TimeHM;
+  room?: string;
+  cancelledDates?: DateKey[];
 }
 
 export interface Timetable {

@@ -6,6 +6,7 @@ import {
   timetableRange,
   timetableTime,
   validateTimetable,
+  groupExistingCourses,
 } from "./timetable";
 
 const course: Course = {
@@ -24,6 +25,29 @@ const form = (courses: Course[]): Timetable => ({
 });
 
 describe("표 형태 시간표", () => {
+  it("같은 과목의 나뉜 시간을 묶고 각 시간의 휴강일을 보존한다", () => {
+    const courses = [course, { ...course, id: "wed", weekday: 3, cancelledDates: ["2026-11-11"] }];
+    const grouped = groupExistingCourses(courses);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.additionalTimes?.[0]).toMatchObject({
+      id: "wed",
+      weekday: 3,
+      start: "18:25",
+      cancelledDates: ["2026-11-11"],
+    });
+    expect(courses[0]).not.toHaveProperty("additionalTimes");
+    expect(validateTimetable(form(grouped))).toBeNull();
+    expect(
+      validateTimetable(
+        form([
+          {
+            ...course,
+            additionalTimes: [{ id: "overlap", weekday: 1, start: "18:30", end: "19:00" }],
+          },
+        ]),
+      ),
+    ).toMatchObject({ courseId: "a" });
+  });
   it("분 단위 시각과 수업 종료 경계를 유지한다", () => {
     expect(timetableTime(18 * 60 + 25)).toBe("18:25");
     expect(courseAt([course], 1, 18 * 60 + 25)?.id).toBe("a");
