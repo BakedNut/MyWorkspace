@@ -4,6 +4,8 @@ import { CalendarDays, Home, LogOut, Menu, Power, Server, X } from "lucide-react
 import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { isPreview } from "@/api";
+import { LegacyImportDialog } from "@/components/LegacyImportDialog";
 
 const NAV = [
   { to: "/", label: "메인", icon: Home },
@@ -53,9 +55,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </ul>
       </nav>
       <div className="mt-auto space-y-3 px-6 pb-6 pt-4 text-sm">
-        <p className="rounded-md border border-sidebar-border px-3 py-2 text-xs text-muted-foreground">
-          디자인 미리보기 · 일정과 서버 정보는 샘플 데이터입니다.
-        </p>
+        <LegacyImportDialog />
+        {isPreview && (
+          <p className="rounded-md border border-sidebar-border px-3 py-2 text-xs text-muted-foreground">
+            디자인 미리보기 · 일정과 서버 정보는 샘플 데이터입니다.
+          </p>
+        )}
         <button
           type="button"
           onClick={() => logout()}
