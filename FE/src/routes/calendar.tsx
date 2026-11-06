@@ -7,7 +7,7 @@ import { EventDialog } from "@/components/EventDialog";
 import { ICloudDialog } from "@/components/ICloudDialog";
 import { TimetableDialog } from "@/components/TimetableDialog";
 import { Button } from "@/components/ui/button";
-import { colorClasses, sourceLabel } from "@/lib/calendar-colors";
+import { colorClasses } from "@/lib/calendar-colors";
 import { expandTimetable } from "@/lib/schedule";
 import {
   WEEKDAYS,
@@ -187,8 +187,6 @@ function CalendarPage() {
             id: SCHOOL_ID,
             name: "학교 시간표",
             color: "school" as const,
-            source: "school" as const,
-            readOnly: true,
           },
           ...calendars.filter((c) => c.source === "icloud"),
         ].map((c) => (
@@ -201,12 +199,6 @@ function CalendarPage() {
             />
             <span aria-hidden className={cn("size-2.5 rounded-full", colorClasses[c.color].dot)} />
             {c.name}
-            <span className="text-muted-foreground">· {sourceLabel[c.source]}</span>
-            {c.readOnly && (
-              <span className="inline-flex items-center gap-0.5 text-muted-foreground">
-                <Lock aria-hidden className="size-3" /> 읽기 전용
-              </span>
-            )}
           </label>
         ))}
       </fieldset>
