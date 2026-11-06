@@ -40,8 +40,7 @@ export interface CalendarEvent {
 export type EventInput = Omit<CalendarEvent, "id">;
 
 export interface ICloudStatus {
-  /** Always "demo" in the mock — no real iCloud connection exists yet. */
-  mode: "demo";
+  mode: "demo" | "live";
   state: "connected" | "disconnected" | "error";
   lastSyncedAt: string | null; // ISO
 }

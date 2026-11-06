@@ -26,8 +26,7 @@ import type {
  *   server    -> /api/server
  *   wol       -> /api/wol/devices
  *
- * Today only `mockApi` implements it. A future `restApi` (fetch-based) must
- * implement the same interface, then swap it in src/api/index.ts.
+ * `restApi` implements the live service; `mockApi` is for previews and unit tests.
  */
 export interface ApiClient {
   auth: {

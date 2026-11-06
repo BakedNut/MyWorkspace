@@ -11,7 +11,7 @@ interface AuthCtx {
 const Ctx = createContext<AuthCtx | null>(null);
 
 /**
- * Client-side session state for the prototype.
+ * Client-side session state for the server session.
  * This only controls what the UI shows. Real access control (password check,
  * HttpOnly session cookie, trusted-network policy) lives in the Spring Boot server.
  */
@@ -19,7 +19,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>("checking");
 
   useEffect(() => {
-    api.auth.getSession().then((s) => setStatus(s ? "authed" : "anon"));
+    let active = true;
+    const anonymous = () => setStatus("anon");
+    window.addEventListener("myworkspace:unauthorized", anonymous);
+    api.auth
+      .getSession()
+      .then((s) => {
+        if (active) setStatus(s ? "authed" : "anon");
+      })
+      .catch(() => {
+        if (active) setStatus("anon");
+      });
+    return () => {
+      active = false;
+      window.removeEventListener("myworkspace:unauthorized", anonymous);
+    };
   }, []);
 
   const login = useCallback(async (password: string) => {

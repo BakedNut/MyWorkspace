@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { MOCK_PASSWORD } from "@/api/mock/mockApi";
+import { isPreview } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,7 @@ export const Route = createFileRoute("/login")({
 });
 
 /*
- * Mock login only. The real flow: POST /api/auth/login → the Spring Boot server
+ * POST /api/auth/login → the Spring Boot server
  * verifies the password, applies rate limiting and any trusted-IP policy, and sets
  * an HttpOnly session cookie. The frontend never inspects or trusts client IPs.
  */
@@ -70,13 +71,13 @@ function LoginPage() {
             <p id="pw-err" role="alert" className="text-sm text-destructive">
               {error}
             </p>
-          ) : (
+          ) : isPreview ? (
             <p id="pw-hint" className="text-xs text-muted-foreground">
               데모 모드 비밀번호:{" "}
               <code className="font-semibold text-foreground">{MOCK_PASSWORD}</code> (실제 인증
               아님)
             </p>
-          )}
+          ) : null}
         </div>
         <Button type="submit" className="mt-6 w-full" size="lg" disabled={pending || !password}>
           {pending ? "확인 중…" : "로그인"}
