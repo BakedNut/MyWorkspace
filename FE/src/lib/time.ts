@@ -26,6 +26,16 @@ export function seoulParts(d: Date = new Date()) {
 
 export const todayKey = () => seoulParts().dateKey;
 
+export function clock12(time: TimeHM) {
+  const minutes = toMinutes(time);
+  if (!Number.isFinite(minutes)) throw new RangeError("올바른 시각이 아닙니다.");
+  const hour = Math.floor(minutes / 60);
+  return {
+    period: hour >= 12 ? "오후" : "오전",
+    time: `${String(hour % 12 || 12).padStart(2, "0")}:${time.slice(3)}`,
+  };
+}
+
 export function parseKey(k: DateKey) {
   const [y = NaN, m = NaN, d = NaN] = k.split("-").map(Number);
   const date = new Date(0);

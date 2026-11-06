@@ -1,14 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { CalendarDays, GraduationCap, Plus } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { CalendarDays, GraduationCap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "@/api";
 import { EventDialog } from "@/components/EventDialog";
 import { MiniCalendar } from "@/components/MiniCalendar";
-import { Button } from "@/components/ui/button";
 import { colorClasses } from "@/lib/calendar-colors";
 import { expandTimetable } from "@/lib/schedule";
-import { addDays, formatKoDate, formatShort, seoulParts, toMinutes } from "@/lib/time";
+import { clock12, formatKoDate, monthGrid, parseKey, seoulParts, toMinutes } from "@/lib/time";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import type { CalendarEvent, TodayItem } from "@/types/domain";
@@ -17,11 +16,11 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "메인 · MyWorkspace" },
-      { name: "description", content: "현재 시각과 오늘 일정, 다음 수업을 한눈에 확인합니다." },
+      { name: "description", content: "현재 시각과 오늘 일정, 선택한 날짜의 일정을 확인합니다." },
       { property: "og:title", content: "메인 · MyWorkspace" },
       {
         property: "og:description",
-        content: "현재 시각과 오늘 일정, 다음 수업을 한눈에 확인합니다.",
+        content: "현재 시각과 오늘 일정, 선택한 날짜의 일정을 확인합니다.",
       },
     ],
   }),
@@ -72,6 +71,19 @@ function Index() {
   const parts = now ? seoulParts(now) : null;
   const today = parts?.dateKey;
   const nowMin = parts ? toMinutes(parts.time) : 0;
+  const clock = parts ? clock12(parts.time) : null;
+  const [selection, setSelection] = useState<string | null>(null);
+  const [month, setMonth] = useState<{ y: number; m: number } | null>(null);
+  const selected = selection ?? today;
+  const view = month ?? (today ? parseKey(today) : null);
+  const grid = view ? monthGrid(view.y, view.m) : [];
+  const from = grid[0]?.key;
+  const to = grid.at(-1)?.key;
+  const { data: selectedItems, isLoading: selectedLoading } = useQuery({
+    queryKey: ["schedule", "today", selected],
+    queryFn: () => api.today.get(selected!),
+    enabled: !!selected,
+  });
 
   const { data: items, isLoading } = useQuery({
     queryKey: ["schedule", "today", today],
@@ -87,9 +99,9 @@ function Index() {
     queryFn: () => api.timetable.get(),
   });
   const { data: monthEvents = [] } = useQuery({
-    queryKey: ["schedule", "events", today && addDays(today, -40), today && addDays(today, 40)],
-    queryFn: () => api.calendar.listEvents({ from: addDays(today!, -40), to: addDays(today!, 40) }),
-    enabled: !!today,
+    queryKey: ["schedule", "events", from, to],
+    queryFn: () => api.calendar.listEvents({ from: from!, to: to! }),
+    enabled: !!from,
   });
 
   const [dialog, setDialog] = useState<{ open: boolean; event?: CalendarEvent }>({ open: false });
@@ -100,24 +112,11 @@ function Index() {
     (r) =>
       toMinutes(r.start!) <= nowMin && nowMin < toMinutes(r.end ?? r.start!) + (r.end ? 0 : 60),
   );
-  const next = timed.find((r) => toMinutes(r.start!) > nowMin);
-
-  const upcomingClasses = useMemo(() => {
-    if (!timetable || !today || !parts) return [];
-    return expandTimetable(timetable, today, addDays(today, 21))
-      .filter((c) => c.date > today || toMinutes(c.start) > nowMin)
-      .slice(0, 2);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timetable, today, Math.floor(nowMin)]);
-
   const marked = useMemo(() => {
     const s = new Set(monthEvents.map((e) => e.date));
-    if (timetable && today)
-      expandTimetable(timetable, addDays(today, -40), addDays(today, 40)).forEach((c) =>
-        s.add(c.date),
-      );
+    if (timetable && from && to) expandTimetable(timetable, from, to).forEach((c) => s.add(c.date));
     return s;
-  }, [monthEvents, timetable, today]);
+  }, [monthEvents, timetable, from, to]);
 
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-5 py-8 md:px-10 md:py-14 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-0">
@@ -125,38 +124,20 @@ function Index() {
         <h1 className="sr-only">메인</h1>
         {/* Clock */}
         <section aria-label="현재 시각 (서울)">
-          <p
-            className="text-7xl font-extrabold leading-none tracking-tight tabular sm:text-8xl md:text-[8.5rem]"
-            aria-hidden={!parts}
-          >
-            {parts ? parts.time : "--:--"}
-          </p>
-          <p className="mt-4 text-xl font-medium sm:text-3xl">
+          <p className="mb-5 text-lg font-medium sm:text-2xl">
             {today ? formatKoDate(today) : "\u00a0"}
           </p>
-          {parts && (
-            <p className="mt-5 text-[15px] text-muted-foreground" aria-live="polite">
-              {current ? (
-                <>
-                  <span className="font-semibold text-foreground">지금</span> {current.title}
-                  {current.end && ` · ${current.end}까지`}
-                </>
-              ) : (
-                "지금 진행 중인 일정 없음"
-              )}
-              <span aria-hidden className="mx-2">
-                /
-              </span>
-              {next ? (
-                <>
-                  <span className="font-semibold text-foreground">다음</span> {next.start}{" "}
-                  {next.title}
-                </>
-              ) : (
-                "오늘 남은 일정 없음"
-              )}
-            </p>
-          )}
+          <p
+            className="flex items-baseline gap-3"
+            aria-label={clock ? `${clock.period} ${clock.time}` : "시각을 불러오는 중"}
+          >
+            <span className="text-xl font-medium text-muted-foreground sm:text-2xl">
+              {clock?.period ?? ""}
+            </span>
+            <span className="text-7xl font-extrabold leading-none tracking-tight tabular sm:text-8xl">
+              {clock?.time ?? "--:--"}
+            </span>
+          </p>
         </section>
 
         {/* Today */}
@@ -165,9 +146,6 @@ function Index() {
             <h2 id="today-title" className="text-2xl font-bold">
               오늘의 일정
             </h2>
-            <Button size="lg" onClick={() => setDialog({ open: true })} disabled={!today}>
-              <Plus aria-hidden /> 일정 추가
-            </Button>
           </div>
 
           {isLoading || !items ? (
@@ -260,38 +238,56 @@ function Index() {
         </section>
       </div>
 
-      {/* Right column */}
       <aside
-        aria-label="달력과 다음 수업"
-        className="border-t pt-8 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0"
+        aria-label="달력과 선택 날짜 일정"
+        className="min-w-0 border-t pt-8 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0"
       >
-        {today && <MiniCalendar today={today} markedDates={marked} />}
-        <section aria-labelledby="next-class" className="mt-8 border-t pt-8">
-          <div className="flex items-baseline justify-between">
-            <h2 id="next-class" className="text-xl font-bold">
-              다음 수업
-            </h2>
-            <Link
-              to="/calendar"
-              className="text-sm text-primary underline-offset-4 hover:underline"
-            >
-              시간표 보기
-            </Link>
-          </div>
-          {upcomingClasses.length === 0 ? (
-            <p className="mt-4 text-muted-foreground">예정된 수업이 없습니다.</p>
+        {today && selected && view && (
+          <MiniCalendar
+            today={today}
+            markedDates={marked}
+            selected={selected}
+            onSelect={setSelection}
+            view={view}
+            onViewChange={setMonth}
+          />
+        )}
+        <section aria-labelledby="selected-day-title" className="mt-8 border-t pt-6">
+          <h2 id="selected-day-title" className="text-xl font-bold">
+            선택한 날짜의 일정
+          </h2>
+          <p className="mt-2 text-sm text-muted-foreground">{selected && formatKoDate(selected)}</p>
+          {selectedLoading || !selectedItems ? (
+            <p className="mt-4 text-sm text-muted-foreground" role="status">
+              일정을 불러오는 중…
+            </p>
+          ) : selectedItems.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">일정이 없습니다.</p>
           ) : (
-            <ul className="mt-4 space-y-5">
-              {upcomingClasses.map((c) => (
-                <li key={c.courseId + c.date}>
-                  <p className="font-semibold">
-                    {formatShort(c.date)}{" "}
-                    <span className="ml-1 font-normal tabular">{c.start}</span>
-                  </p>
-                  <p className="mt-1 flex items-center gap-1.5 text-muted-foreground">
-                    <GraduationCap aria-hidden className="size-4" />
-                    {c.name} · {c.room}
-                  </p>
+            <ul className="mt-4 divide-y">
+              {selectedItems.map(toRow).map((r) => (
+                <li key={r.id} className="min-w-0 py-3">
+                  {r.event ? (
+                    <button
+                      type="button"
+                      className="w-full min-w-0 rounded-md text-left hover:bg-accent"
+                      onClick={() => setDialog({ open: true, event: r.event! })}
+                    >
+                      <p className="text-xs tabular-nums text-muted-foreground">
+                        {r.start ? `${r.start}–${r.end}` : "종일"}
+                      </p>
+                      <p className="mt-1 truncate font-semibold">{r.title}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{r.meta}</p>
+                    </button>
+                  ) : (
+                    <div>
+                      <p className="text-xs tabular-nums text-muted-foreground">
+                        {r.start}–{r.end}
+                      </p>
+                      <p className="mt-1 truncate font-semibold">{r.title}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{r.meta}</p>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

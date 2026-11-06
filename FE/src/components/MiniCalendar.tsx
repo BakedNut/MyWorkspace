@@ -1,12 +1,22 @@
-import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useState } from "react";
 import { WEEKDAYS, formatKoDate, monthGrid, parseKey, shiftMonth, weekday } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
-export function MiniCalendar({ today, markedDates }: { today: string; markedDates: Set<string> }) {
-  const t = parseKey(today);
-  const [view, setView] = useState({ y: t.y, m: t.m });
+export function MiniCalendar({
+  today,
+  markedDates,
+  selected,
+  onSelect,
+  view,
+  onViewChange,
+}: {
+  today: string;
+  markedDates: Set<string>;
+  selected: string;
+  onSelect(date: string): void;
+  view: { y: number; m: number };
+  onViewChange(view: { y: number; m: number }): void;
+}) {
   const cells = monthGrid(view.y, view.m);
 
   return (
@@ -14,7 +24,7 @@ export function MiniCalendar({ today, markedDates }: { today: string; markedDate
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setView((v) => shiftMonth(v.y, v.m, -1))}
+          onClick={() => onViewChange(shiftMonth(view.y, view.m, -1))}
           className="inline-flex size-11 items-center justify-center rounded-md text-primary hover:bg-accent"
         >
           <ChevronLeft aria-hidden className="size-5" />
@@ -25,7 +35,7 @@ export function MiniCalendar({ today, markedDates }: { today: string; markedDate
         </h2>
         <button
           type="button"
-          onClick={() => setView((v) => shiftMonth(v.y, v.m, 1))}
+          onClick={() => onViewChange(shiftMonth(view.y, view.m, 1))}
           className="inline-flex size-11 items-center justify-center rounded-md text-primary hover:bg-accent"
         >
           <ChevronRight aria-hidden className="size-5" />
@@ -51,16 +61,18 @@ export function MiniCalendar({ today, markedDates }: { today: string; markedDate
           const wd = weekday(key);
           const isToday = key === today;
           return (
-            <Link
+            <button
               key={key}
-              to="/calendar"
-              search={{ date: key }}
-              aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}${markedDates.has(key) ? ", 일정 있음" : ""} — 캘린더에서 보기`}
+              type="button"
+              onClick={() => onSelect(key)}
+              aria-pressed={key === selected}
+              aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}${markedDates.has(key) ? ", 일정 있음" : ""} — 일정 보기`}
               aria-current={isToday ? "date" : undefined}
               className={cn(
                 "relative mx-auto flex size-10 flex-col items-center justify-center rounded-lg tabular hover:bg-accent",
                 wd === 0 && "text-cal-holiday",
                 wd === 6 && "text-primary",
+                key === selected && !isToday && "bg-accent ring-1 ring-primary/40",
                 isToday && "bg-primary font-semibold text-primary-foreground hover:bg-primary",
               )}
             >
@@ -74,7 +86,7 @@ export function MiniCalendar({ today, markedDates }: { today: string; markedDate
                   )}
                 />
               )}
-            </Link>
+            </button>
           );
         })}
       </div>
