@@ -20,6 +20,14 @@ import type { CalendarEvent, CalendarInfo, EventInput } from "@/types/domain";
 export const selectClass =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60";
 
+function newRequestId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 15) | 64;
+  bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 interface Props {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -34,7 +42,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
   const uid = useId();
   const writable = calendars.filter((c) => !c.readOnly);
   const eventCal = event ? calendars.find((c) => c.id === event.calendarId) : undefined;
-  const readOnly = !!eventCal?.readOnly;
+  const readOnly = !!eventCal?.readOnly || !!event?.readOnly;
 
   const blank = (): EventInput => ({
     calendarId: writable[0]?.id ?? "",
@@ -45,6 +53,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
     end: "11:00",
     location: "",
     memo: "",
+    requestId: newRequestId(),
     ...defaults,
   });
   const [form, setForm] = useState<EventInput>(blank);
@@ -72,7 +81,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
     onError: (e) => setError(e instanceof Error ? e.message : "저장하지 못했습니다."),
   });
   const delMut = useMutation({
-    mutationFn: () => api.calendar.deleteEvent(event!.id),
+    mutationFn: () => api.calendar.deleteEvent(event!.id, event?.revision),
     onSuccess: done,
     onError: (e) => setError(e instanceof Error ? e.message : "삭제하지 못했습니다."),
   });
@@ -102,7 +111,9 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
           <DialogTitle>{readOnly ? "일정 보기" : event ? "일정 수정" : "일정 추가"}</DialogTitle>
           <DialogDescription>
             {readOnly
-              ? `"${eventCal?.name}"은(는) 읽기 전용 캘린더라 수정할 수 없습니다.`
+              ? event?.readOnly
+                ? "반복·여러 날·초대 일정은 Apple 캘린더에서 수정하세요."
+                : `"${eventCal?.name}"은(는) 읽기 전용 캘린더라 수정할 수 없습니다.`
               : "필수 항목은 제목과 날짜입니다."}
           </DialogDescription>
         </DialogHeader>

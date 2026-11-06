@@ -127,6 +127,18 @@ export const mockApi: ApiClient = {
   },
 
   calendar: {
+    async discoverICloud() {
+      throw new ApiError("iCloud 연결은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async connectICloud() {
+      throw new ApiError("iCloud 연결은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async syncICloud() {
+      throw new ApiError("iCloud 연결은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async disconnectICloud() {
+      throw new ApiError("iCloud 연결은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
     async listCalendars() {
       await delay(100);
       return calendars();

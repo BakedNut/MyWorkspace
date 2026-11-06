@@ -35,6 +35,10 @@ export interface CalendarEvent {
   end?: TimeHM;
   location?: string;
   memo?: string;
+  revision?: string;
+  requestId?: string;
+  readOnly?: boolean;
+  recurring?: boolean;
 }
 
 export type EventInput = Omit<CalendarEvent, "id">;
@@ -43,6 +47,16 @@ export interface ICloudStatus {
   mode: "demo" | "live";
   state: "connected" | "disconnected" | "error";
   lastSyncedAt: string | null; // ISO
+  requiresHttps?: boolean;
+  secureSetupUrl?: string | null;
+  accountLabel?: string;
+  calendarName?: string | null;
+  message?: string | null;
+}
+
+export interface ICloudDiscovery {
+  draftToken: string;
+  calendars: { id: string; name: string; readOnly: boolean }[];
 }
 
 // ---------- /api/timetable ----------

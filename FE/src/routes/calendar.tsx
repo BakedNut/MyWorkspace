@@ -103,6 +103,7 @@ function CalendarPage() {
   const { data: icloud } = useQuery({
     queryKey: ["schedule", "icloud"],
     queryFn: () => api.calendar.getICloudStatus(),
+    refetchInterval: 60_000,
   });
 
   const calById = useMemo(() => new Map(calendars.map((c) => [c.id, c])), [calendars]);
@@ -194,9 +195,11 @@ function CalendarPage() {
       </div>
 
       {/* Legend / calendar sources */}
-      {(eventsError || holidays?.message) && (
+      {(eventsError || holidays?.message || icloud?.state === "error") && (
         <p role="alert" className="mt-4 text-sm text-destructive">
-          {eventsError ? "일정을 불러오지 못했습니다. 잠시 후 다시 시도하세요." : holidays?.message}
+          {eventsError
+            ? "일정을 불러오지 못했습니다. 잠시 후 다시 시도하세요."
+            : holidays?.message || icloud?.message || "iCloud 동기화가 지연되고 있습니다."}
         </p>
       )}
       <fieldset className="mt-6 flex flex-wrap gap-x-5 gap-y-2 border-y py-3 text-sm">

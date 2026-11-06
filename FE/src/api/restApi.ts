@@ -15,9 +15,10 @@ export async function request<T>(
   method = "GET",
   body?: unknown,
   retry = true,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
   try {
-    const headers: Record<string, string> = { Accept: "application/json" };
+    const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (method !== "GET") {
       const value = csrf ?? (await token());
@@ -33,7 +34,7 @@ export async function request<T>(
     const value = text ? JSON.parse(text) : null;
     if (response.status === 403 && value?.code === "CSRF" && retry) {
       csrf = null;
-      return request<T>(path, method, body, false);
+      return request<T>(path, method, body, false, extraHeaders);
     }
     if (!response.ok) {
       if (response.status === 401 && path !== "/auth/login")
@@ -75,8 +76,20 @@ export const restApi: ApiClient = {
       request(`/calendar/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
     createEvent: (input) => request("/calendar/events", "POST", input),
     updateEvent: (id, input) => request(`/calendar/events/${encodeURIComponent(id)}`, "PUT", input),
-    deleteEvent: (id) => request(`/calendar/events/${encodeURIComponent(id)}`, "DELETE"),
+    deleteEvent: (id, revision) =>
+      request(
+        `/calendar/events/${encodeURIComponent(id)}`,
+        "DELETE",
+        undefined,
+        true,
+        revision ? { "If-Match": revision } : {},
+      ),
     getICloudStatus: () => request("/calendar/icloud/status"),
+    discoverICloud: (input) => request("/calendar/icloud/discover", "POST", input),
+    connectICloud: (draftToken, calendarId) =>
+      request("/calendar/icloud/connect", "POST", { draftToken, calendarId }),
+    syncICloud: () => request("/calendar/icloud/sync", "POST"),
+    disconnectICloud: () => request("/calendar/icloud", "DELETE"),
   },
   timetable: {
     get: () => request("/timetable"),

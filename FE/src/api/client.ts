@@ -5,6 +5,7 @@ import type {
   DateKey,
   EventInput,
   ICloudStatus,
+  ICloudDiscovery,
   ServerStatus,
   ServerHistory,
   ServerRange,
@@ -42,8 +43,12 @@ export interface ApiClient {
     listEvents(range: { from: DateKey; to: DateKey }): Promise<CalendarEvent[]>;
     createEvent(input: EventInput): Promise<CalendarEvent>;
     updateEvent(id: string, input: EventInput): Promise<CalendarEvent>;
-    deleteEvent(id: string): Promise<void>;
+    deleteEvent(id: string, revision?: string): Promise<void>;
     getICloudStatus(): Promise<ICloudStatus>;
+    discoverICloud(input: { appleId: string; appPassword: string }): Promise<ICloudDiscovery>;
+    connectICloud(draftToken: string, calendarId: string): Promise<ICloudStatus>;
+    syncICloud(): Promise<ICloudStatus>;
+    disconnectICloud(): Promise<void>;
   };
   timetable: {
     get(): Promise<Timetable>;
@@ -66,7 +71,13 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly code:
-      "UNAUTHORIZED" | "RATE_LIMITED" | "VALIDATION" | "READ_ONLY" | "NETWORK" | "NOT_FOUND",
+      | "UNAUTHORIZED"
+      | "RATE_LIMITED"
+      | "VALIDATION"
+      | "READ_ONLY"
+      | "NETWORK"
+      | "NOT_FOUND"
+      | "CONFLICT",
     public readonly retryAfterMs?: number,
   ) {
     super(message);
