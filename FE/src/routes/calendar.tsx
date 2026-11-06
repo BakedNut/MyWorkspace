@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Cloud, GraduationCap, Lock, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "@/api";
+import { api, isPreview } from "@/api";
+import { request } from "@/api/restApi";
 import { EventDialog } from "@/components/EventDialog";
 import { ICloudDialog } from "@/components/ICloudDialog";
 import { TimetableDialog } from "@/components/TimetableDialog";
@@ -76,10 +77,24 @@ function CalendarPage() {
     queryKey: ["schedule", "calendars"],
     queryFn: () => api.calendar.listCalendars(),
   });
-  const { data: events = [], isLoading } = useQuery({
+  const {
+    data: events = [],
+    isLoading,
+    error: eventsError,
+    isSuccess: eventsReady,
+  } = useQuery({
     queryKey: ["schedule", "events", from, to],
     queryFn: () => api.calendar.listEvents({ from: from!, to: to! }),
     enabled: !!from,
+  });
+  const { data: holidays } = useQuery({
+    queryKey: ["schedule", "holidays-status", from, to],
+    queryFn: () =>
+      request<{ available: boolean; message: string }>(
+        `/calendar/holidays/status?from=${from}&to=${to}`,
+      ),
+    enabled: !isPreview && !!from && eventsReady,
+    refetchInterval: 60_000,
   });
   const { data: timetable } = useQuery({
     queryKey: ["schedule", "timetable"],
@@ -174,12 +189,16 @@ function CalendarPage() {
           </Button>
           <Button variant="outline" onClick={() => setIcloudOpen(true)}>
             <Cloud aria-hidden /> iCloud {icloud?.state === "connected" ? "연결됨" : ""}{" "}
-            <span className="text-xs text-muted-foreground">(시안)</span>
           </Button>
         </div>
       </div>
 
       {/* Legend / calendar sources */}
+      {(eventsError || holidays?.message) && (
+        <p role="alert" className="mt-4 text-sm text-destructive">
+          {eventsError ? "일정을 불러오지 못했습니다. 잠시 후 다시 시도하세요." : holidays?.message}
+        </p>
+      )}
       <fieldset className="mt-6 flex flex-wrap gap-x-5 gap-y-2 border-y py-3 text-sm">
         <legend className="sr-only">표시할 캘린더</legend>
         {[
