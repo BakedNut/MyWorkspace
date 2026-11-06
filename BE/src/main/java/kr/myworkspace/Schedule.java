@@ -46,7 +46,21 @@ record EventInput(
     String start,
     String end,
     @Size(max = 200) String location,
-    @Size(max = 10000) String memo) {}
+    @Size(max = 10000) String memo,
+    @Size(max = 1024) String revision,
+    @Pattern(regexp = "[0-9a-fA-F-]{36}") String requestId) {
+  EventInput(
+      String calendarId,
+      String title,
+      LocalDate date,
+      boolean allDay,
+      String start,
+      String end,
+      String location,
+      String memo) {
+    this(calendarId, title, date, allDay, start, end, location, memo, null, null);
+  }
+}
 
 record Course(
     @NotBlank @Size(max = 64) String id,
@@ -68,11 +82,13 @@ class ScheduleService {
   final Documents docs;
   final EventRepository events;
   final Holidays holidays;
+  final ICloud cloud;
 
-  ScheduleService(Documents docs, EventRepository events, Holidays holidays) {
+  ScheduleService(Documents docs, EventRepository events, Holidays holidays, ICloud cloud) {
     this.docs = docs;
     this.events = events;
     this.holidays = holidays;
+    this.cloud = cloud;
   }
 
   static final CalendarInfo PERSONAL =
@@ -108,11 +124,16 @@ class ScheduleService {
                 .map(this::eventValue)
                 .toList());
     result.addAll(holidays.between(from, to));
+    result.addAll(cloud.list(from, to));
     return result;
   }
 
   @Transactional
   Map<String, Object> save(String id, EventInput input) {
+    if ("cal-remote".equals(input.calendarId())) {
+      if (!input.allDay()) timeRange(input.start(), input.end());
+      return cloud.save(id, input);
+    }
     ApiException.require(PERSONAL.id().equals(input.calendarId()), "이 캘린더에는 저장할 수 없습니다.");
     if (!input.allDay()) timeRange(input.start(), input.end());
     ApiException.require(
@@ -141,6 +162,14 @@ class ScheduleService {
 
   @Transactional
   void delete(String id) {
+    delete(id, null);
+  }
+
+  void delete(String id, String revision) {
+    if (id.startsWith("icloud-")) {
+      cloud.delete(id, revision);
+      return;
+    }
     if (!events.existsById(id)) throw new ApiException(404, "NOT_FOUND", "일정을 찾을 수 없습니다.");
     events.deleteById(id);
   }
@@ -151,6 +180,10 @@ class ScheduleService {
 
   boolean hasEvents() {
     return events.count() > 0;
+  }
+
+  CalendarInfo cloudCalendar() {
+    return cloud.calendar();
   }
 
   Object holidayStatus(LocalDate from, LocalDate to) {
@@ -195,7 +228,13 @@ class ScheduleService {
               "event",
               event,
               "calendar",
-              "cal-holiday".equals(event.get("calendarId")) ? HOLIDAY : PERSONAL));
+              "cal-holiday".equals(event.get("calendarId"))
+                  ? HOLIDAY
+                  : "cal-remote".equals(event.get("calendarId"))
+                      ? Objects.requireNonNullElse(
+                          cloud.calendar(),
+                          new CalendarInfo("cal-remote", "iCloud", "icloud", "icloud", true))
+                      : PERSONAL));
     Timetable t = timetable();
     if (!date.isBefore(t.semesterStart()) && !date.isAfter(t.semesterEnd()))
       for (Course c : t.courses())
@@ -239,14 +278,11 @@ class ScheduleController {
 
   @GetMapping("/api/calendar/calendars")
   Object calendars() {
-    return List.of(ScheduleService.PERSONAL, ScheduleService.HOLIDAY);
-  }
-
-  @GetMapping("/api/calendar/icloud/status")
-  Object cloud() {
-    Map<String, Object> result =
-        new LinkedHashMap<>(Map.of("mode", "live", "state", "disconnected"));
-    result.put("lastSyncedAt", null);
+    List<CalendarInfo> result = new ArrayList<>();
+    var calendar = service.cloudCalendar();
+    if (calendar != null) result.add(calendar);
+    if (calendar == null || service.hasEvents()) result.add(ScheduleService.PERSONAL);
+    result.add(ScheduleService.HOLIDAY);
     return result;
   }
 
@@ -271,8 +307,10 @@ class ScheduleController {
   }
 
   @DeleteMapping("/api/calendar/events/{id}")
-  void delete(@PathVariable String id) {
-    service.delete(id);
+  void delete(
+      @PathVariable String id,
+      @RequestHeader(value = "If-Match", required = false) String revision) {
+    service.delete(id, revision);
   }
 
   @GetMapping("/api/timetable")
