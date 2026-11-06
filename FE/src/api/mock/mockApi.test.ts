@@ -13,6 +13,23 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("디자인 시안의 데이터 변경", () => {
+  it("WOL 목록 추가·수정·삭제는 한 번에 저장하고 실패 시 이전 목록을 유지한다", async () => {
+    const old = [{ id: "my-pc", name: "내 PC", mac: "3C:7C:3F:12:AB:CD" }];
+    save("wol", old);
+    mockControls.set({ simulateSaveFailure: true });
+    const failed = expect(mockApi.wol.saveDevices([])).rejects.toMatchObject({ code: "NETWORK" });
+    await vi.runAllTimersAsync();
+    await failed;
+    expect(load("wol", () => [])).toEqual(old);
+    mockControls.set({ simulateSaveFailure: false });
+    const next = [{ id: "new-pc", name: " 새 PC ", mac: "3c7c3f12abce" }];
+    const saved = mockApi.wol.saveDevices(next);
+    await vi.runAllTimersAsync();
+    expect(await saved).toEqual([{ ...next[0], name: "새 PC", mac: "3C:7C:3F:12:AB:CE" }]);
+    const missing = expect(mockApi.wol.wake("my-pc")).rejects.toMatchObject({ code: "VALIDATION" });
+    await vi.runAllTimersAsync();
+    await missing;
+  });
   it("로컬 분류를 없애도 기존 일정의 내용과 편집은 유지한다", async () => {
     save("calendars", [
       ...seedCalendars(),

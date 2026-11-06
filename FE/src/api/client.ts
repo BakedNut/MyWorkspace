@@ -56,6 +56,7 @@ export interface ApiClient {
   };
   wol: {
     list(): Promise<WolDevice[]>;
+    saveDevices(devices: WolDevice[]): Promise<WolDevice[]>;
     updateMac(id: WolDeviceId, mac: string | null): Promise<WolDevice>;
     wake(id: WolDeviceId): Promise<WakeResult>;
     getBootState(id: WolDeviceId): Promise<BootState>;

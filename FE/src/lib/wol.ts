@@ -1,4 +1,23 @@
+import type { WolDevice } from "@/types/domain";
+
 export const WAKE_COOLDOWN_MS = 10_000;
+
+export function normalizeWolList(devices: WolDevice[]): WolDevice[] {
+  const ids = new Set<string>();
+  const macs = new Set<string>();
+  return devices.map((device, index) => {
+    const name = device.name.trim();
+    if (!name || name.length > 64)
+      throw new Error(`${index + 1}번째 PC 이름을 1~64자로 입력하세요.`);
+    if (!device.id || ids.has(device.id)) throw new Error("PC 식별자가 중복되거나 비어 있습니다.");
+    ids.add(device.id);
+    const mac = device.mac === null ? null : normalizeMac(device.mac);
+    if (device.mac !== null && !mac) throw new Error(`${name}: 올바른 MAC 주소를 입력하세요.`);
+    if (mac && macs.has(mac)) throw new Error(`${name}: 이미 등록한 MAC 주소입니다.`);
+    if (mac) macs.add(mac);
+    return { ...device, name, mac };
+  });
+}
 
 /**
  * Normalize a MAC address to "AA:BB:CC:DD:EE:FF".

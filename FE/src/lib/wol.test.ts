@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { cooldownRemaining, normalizeMac } from "./wol";
+import { cooldownRemaining, normalizeMac, normalizeWolList } from "./wol";
 
 describe("WOL 입력과 재요청 제한", () => {
+  it("PC 목록의 이름과 MAC을 정규화하고 중복·잘못된 입력을 거부한다", () => {
+    const first = { id: "a", name: " 내 PC ", mac: "3c7c3f12abcd" };
+    expect(normalizeWolList([first])).toEqual([
+      { ...first, name: "내 PC", mac: "3C:7C:3F:12:AB:CD" },
+    ]);
+    expect(normalizeWolList([])).toEqual([]);
+    expect(() => normalizeWolList([first, { ...first, id: "b" }])).toThrow("이미 등록");
+    expect(() => normalizeWolList([first, { ...first, mac: null }])).toThrow("식별자");
+    expect(() => normalizeWolList([{ ...first, name: " " }])).toThrow("이름");
+    expect(() => normalizeWolList([{ ...first, mac: "invalid" }])).toThrow("MAC");
+  });
   it.each(["3c:7c:3f:12:ab:cd", "3C-7C-3F-12-AB-CD", "3c7c3f12abcd", "3c7c.3f12.abcd"])(
     "MAC 주소를 정규화한다: %s",
     (value) => {

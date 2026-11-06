@@ -11,7 +11,7 @@ import type {
 } from "@/types/domain";
 import { expandTimetable, isValidTimeRange } from "@/lib/schedule";
 import { validateTimetable } from "@/lib/timetable";
-import { cooldownRemaining, normalizeMac } from "@/lib/wol";
+import { cooldownRemaining, normalizeMac, normalizeWolList } from "@/lib/wol";
 import { delay, load, remove, save } from "./storage";
 import { sampleServerHistory } from "./server-history";
 import {
@@ -214,6 +214,24 @@ export const mockApi: ApiClient = {
   },
 
   wol: {
+    async saveDevices(next) {
+      await delay(200);
+      let normalized: WolDevice[];
+      try {
+        normalized = normalizeWolList(next);
+      } catch (error) {
+        throw new ApiError(
+          error instanceof Error ? error.message : "PC 목록을 확인하세요.",
+          "VALIDATION",
+        );
+      }
+      if (controls().simulateSaveFailure)
+        throw new ApiError("PC 목록을 저장하지 못했습니다.", "NETWORK");
+      save("wol", normalized);
+      for (const id of lastWake.keys())
+        if (!normalized.some((d) => d.id === id)) lastWake.delete(id);
+      return normalized;
+    },
     async list() {
       await delay(100);
       return devices();

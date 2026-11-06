@@ -118,7 +118,7 @@ export interface ServerHistory {
 }
 
 // ---------- /api/wol/devices ----------
-export type WolDeviceId = "my-pc" | "brother-pc";
+export type WolDeviceId = string;
 
 export interface WolDevice {
   id: WolDeviceId;
