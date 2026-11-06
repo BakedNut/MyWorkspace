@@ -33,12 +33,17 @@ class CloudSecrets {
   }
 
   String encrypt(String value) {
+    return encrypt(value, "icloud");
+  }
+
+  String encrypt(String value, String purpose) {
     try {
       byte[] iv = new byte[12];
       random.nextBytes(iv);
       Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
       cipher.init(Cipher.ENCRYPT_MODE, key(true), new GCMParameterSpec(128, iv));
-      cipher.updateAAD("myworkspace-icloud-v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      cipher.updateAAD(
+          ("myworkspace-" + purpose + "-v1").getBytes(java.nio.charset.StandardCharsets.UTF_8));
       return Base64.getEncoder().encodeToString(iv)
           + "."
           + Base64.getEncoder()
@@ -50,6 +55,10 @@ class CloudSecrets {
   }
 
   String decrypt(String value) {
+    return decrypt(value, "icloud");
+  }
+
+  String decrypt(String value, String purpose) {
     try {
       var parts = value.split("\\.", -1);
       if (parts.length != 2) throw new IllegalArgumentException();
@@ -58,7 +67,8 @@ class CloudSecrets {
           Cipher.DECRYPT_MODE,
           key(false),
           new GCMParameterSpec(128, Base64.getDecoder().decode(parts[0])));
-      cipher.updateAAD("myworkspace-icloud-v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      cipher.updateAAD(
+          ("myworkspace-" + purpose + "-v1").getBytes(java.nio.charset.StandardCharsets.UTF_8));
       return new String(
           cipher.doFinal(Base64.getDecoder().decode(parts[1])),
           java.nio.charset.StandardCharsets.UTF_8);

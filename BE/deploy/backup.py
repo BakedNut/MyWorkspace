@@ -61,7 +61,7 @@ def verify(target):
                 if process.poll() is None:process.kill()
         tables = sql(f"SHOW TABLES FROM `{name}`;").splitlines()
         assert set(tables) == {"app_document", "calendar_event", "flyway_schema_history", "metric_sample", "wol_request", "icloud_range", "icloud_resource"}
-        has_credentials = sql(f"SELECT COUNT(*) FROM `{name}`.app_document WHERE id='icloud' AND JSON_EXTRACT(payload,'$.encryptedCredentials') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.encryptedCredentials')) <> 'null';").strip() != "0"
+        has_credentials = sql(f"SELECT COUNT(*) FROM `{name}`.app_document WHERE (id='icloud' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.encryptedCredentials')) <> 'null') OR (id='security-settings' AND (JSON_UNQUOTE(JSON_EXTRACT(payload,'$.otpSecret')) <> 'null' OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.pendingSecret')) <> 'null'));").strip() != "0"
         if has_credentials:assert len(target.with_suffix(".key").read_bytes()) == 32
         assert int(sql(f"SELECT COUNT(*) FROM `{name}`.app_document;")) >= 2
         assert sql(f"SELECT COUNT(*) FROM `{name}`.flyway_schema_history WHERE success=0;").strip() == "0"

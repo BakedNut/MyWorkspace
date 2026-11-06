@@ -49,6 +49,11 @@ class Security {
   }
 
   @Bean
+  java.time.Clock securityClock() {
+    return java.time.Clock.systemUTC();
+  }
+
+  @Bean
   org.springframework.security.core.userdetails.UserDetailsService users() {
     return username -> {
       throw new org.springframework.security.core.userdetails.UsernameNotFoundException(username);
@@ -59,6 +64,7 @@ class Security {
   SecurityFilterChain chain(
       HttpSecurity http,
       CsrfTokenRepository tokens,
+      Credentials credentials,
       @Value("${app.trusted-networks}") String networks)
       throws Exception {
     List<IpAddressMatcher> trusted =
@@ -102,6 +108,17 @@ class Security {
                   }
                 }
                 var current = SecurityContextHolder.getContext().getAuthentication();
+                if (current != null && "owner".equals(current.getPrincipal())) {
+                  try {
+                    if (!Objects.equals(current.getDetails(), credentials.version())) {
+                      SecurityContextHolder.setContext(SecurityContextHolder.createEmptyContext());
+                      current = null;
+                    }
+                  } catch (org.springframework.dao.DataAccessException failure) {
+                    writeError(res, 503, "NETWORK", "인증 상태를 확인하지 못했습니다.");
+                    return;
+                  }
+                }
                 if (allowed
                     && (current == null || current instanceof AnonymousAuthenticationToken)) {
                   var context = SecurityContextHolder.createEmptyContext();
@@ -129,7 +146,7 @@ class Security {
 @RequestMapping("/api/auth")
 class AuthController {
   private final BCryptPasswordEncoder passwords;
-  private final String hash;
+  private final Credentials credentials;
   private final CsrfTokenRepository csrf;
   private final HttpSessionSecurityContextRepository sessions =
       new HttpSessionSecurityContextRepository();
@@ -140,14 +157,10 @@ class AuthController {
   record Login(String password) {}
 
   AuthController(
-      BCryptPasswordEncoder passwords,
-      CsrfTokenRepository csrf,
-      @Value("${app.password-hash}") String hash) {
-    if (!hash.matches("\\$2[aby]\\$\\d\\d\\$.{53}"))
-      throw new IllegalArgumentException("APP_PASSWORD_HASH must be a BCrypt hash");
+      BCryptPasswordEncoder passwords, CsrfTokenRepository csrf, Credentials credentials) {
     this.passwords = passwords;
     this.csrf = csrf;
-    this.hash = hash;
+    this.credentials = credentials;
   }
 
   @GetMapping("/csrf")
@@ -180,9 +193,8 @@ class AuthController {
         throw new ApiException(429, "RATE_LIMITED", "잠시 후 다시 로그인하세요.", 60_000);
       attempts.put(ip, new Attempts(old.count + 1, old.until));
     }
-    if (login.password == null
-        || login.password.length() > 128
-        || !passwords.matches(login.password, hash))
+    Long verifiedVersion = credentials.authenticate(login.password);
+    if (login.password == null || login.password.length() > 128 || verifiedVersion == null)
       throw new ApiException(401, "UNAUTHORIZED", "비밀번호가 올바르지 않습니다.");
     synchronized (attempts) {
       attempts.remove(ip);
@@ -190,6 +202,7 @@ class AuthController {
     var auth =
         UsernamePasswordAuthenticationToken.authenticated(
             "owner", null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+    auth.setDetails(verifiedVersion);
     if (req.getSession(false) != null) req.changeSessionId();
     var context = SecurityContextHolder.createEmptyContext();
     context.setAuthentication(auth);
