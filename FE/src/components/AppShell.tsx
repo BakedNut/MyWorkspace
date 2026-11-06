@@ -5,7 +5,6 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { isPreview } from "@/api";
-import { LegacyImportDialog } from "@/components/LegacyImportDialog";
 
 const NAV = [
   { to: "/", label: "메인", icon: Home },
@@ -72,7 +71,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Settings aria-hidden className="size-4" />
           암호 설정
         </button>
-        <LegacyImportDialog />
         {isPreview && (
           <p className="rounded-md border border-sidebar-border px-3 py-2 text-xs text-muted-foreground">
             디자인 미리보기 · 일정과 서버 정보는 샘플 데이터입니다.

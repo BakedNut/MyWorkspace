@@ -84,7 +84,6 @@ class ApiIntegrationTest {
   @Autowired Documents docs;
   @Autowired WolService wol;
   @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
-  @Autowired LegacyImport importer;
   @MockitoBean Monitoring monitor;
   @MockitoBean Holidays holidays;
   @MockitoBean MagicPackets packets;
@@ -298,50 +297,13 @@ class ApiIntegrationTest {
   }
 
   @Test
-  void failedLegacyImportRollsBackEverything() {
-    String before = docs.repository.findById("timetable").orElseThrow().payload;
-    var timetable =
-        new Timetable(
-            java.time.LocalDate.parse("2026-09-01"),
-            java.time.LocalDate.parse("2026-12-30"),
-            List.of());
-    var invalid =
-        new EventInput(
-            "cal-holiday",
-            "가져오기",
-            java.time.LocalDate.parse("2026-11-06"),
-            true,
-            null,
-            null,
-            null,
-            null);
-    assertThatThrownBy(() -> importer.apply(new LegacyData(List.of(invalid), timetable, null)))
-        .isInstanceOf(ApiException.class);
-    assertThat(docs.repository.findById("timetable").orElseThrow().payload).isEqualTo(before);
-    assertThat(
-            docs.json
-                .readTree(docs.repository.findById("legacy-import").orElseThrow().payload)
-                .path("completed")
-                .asBoolean())
-        .isFalse();
-  }
-
-  @Test
-  @org.springframework.transaction.annotation.Transactional
-  void successfulLegacyImportIsAtomicAndCanOnlyRunOnce() {
-    var start = java.time.LocalDate.parse("2026-09-01");
-    var end = java.time.LocalDate.parse("2026-12-31");
-    var table =
-        new Timetable(
-            start,
-            end,
-            List.of(
-                new Course(
-                    "import-course", "가져온 수업", "101", "교수", 1, "09:00", "10:00", List.of())));
-    importer.apply(new LegacyData(null, table, null));
-    assertThat(docs.read("timetable", Timetable.class).courses().getFirst().name())
-        .isEqualTo("가져온 수업");
-    assertThatThrownBy(() -> importer.apply(new LegacyData(null, table, null)))
-        .isInstanceOf(ApiException.class);
+  void retiredLegacyImportIsUnavailable() throws Exception {
+    mvc.perform(
+            post("/api/import/legacy")
+                .header(Security.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content("{}"))
+        .andExpect(status().isNotFound());
   }
 }
