@@ -13,9 +13,12 @@
 *.p12
 *.jks
 *.sql
+!BE/src/main/resources/db/migration/*.sql
 *.sql.gz
 .DS_Store
 .idea/
 .vscode/
 .runtime/
 .secrets/
+**/__pycache__/
+*.pyc
