@@ -72,6 +72,7 @@ function Index() {
   const today = parts?.dateKey;
   const nowMin = parts ? toMinutes(parts.time) : 0;
   const clock = parts ? clock12(parts.time) : null;
+  const clockTime = clock && parts ? `${clock.time}:${parts.seconds}` : "--:--:--";
   const [selection, setSelection] = useState<string | null>(null);
   const [month, setMonth] = useState<{ y: number; m: number } | null>(null);
   const selected = selection ?? today;
@@ -123,20 +124,16 @@ function Index() {
       <div className="min-w-0 lg:pr-10">
         <h1 className="sr-only">메인</h1>
         {/* Clock */}
-        <section aria-label="현재 시각 (서울)">
+        <section aria-label="현재 시각 (서울)" className="@container">
           <p className="mb-5 text-lg font-medium sm:text-2xl">
             {today ? formatKoDate(today) : "\u00a0"}
           </p>
           <p
-            className="flex items-baseline gap-3"
-            aria-label={clock ? `${clock.period} ${clock.time}` : "시각을 불러오는 중"}
+            className="flex items-baseline gap-2 whitespace-nowrap text-[clamp(2rem,15cqw,6rem)] font-extrabold leading-none tracking-tight"
+            aria-label={clock ? `${clock.period} ${clockTime}` : "시각을 불러오는 중"}
           >
-            <span className="text-xl font-medium text-muted-foreground sm:text-2xl">
-              {clock?.period ?? ""}
-            </span>
-            <span className="text-7xl font-extrabold leading-none tracking-tight tabular sm:text-8xl">
-              {clock?.time ?? "--:--"}
-            </span>
+            <span className="text-[0.5em] text-muted-foreground">{clock?.period ?? ""}</span>
+            <span className="tabular">{clockTime}</span>
           </p>
         </section>
 
@@ -253,10 +250,9 @@ function Index() {
           />
         )}
         <section aria-labelledby="selected-day-title" className="mt-8 border-t pt-6">
-          <h2 id="selected-day-title" className="text-xl font-bold">
-            선택한 날짜의 일정
+          <h2 id="selected-day-title" className="text-lg font-bold leading-relaxed">
+            {selected ? `${formatKoDate(selected)}의 일정` : "일정을 불러오는 중…"}
           </h2>
-          <p className="mt-2 text-sm text-muted-foreground">{selected && formatKoDate(selected)}</p>
           {selectedLoading || !selectedItems ? (
             <p className="mt-4 text-sm text-muted-foreground" role="status">
               일정을 불러오는 중…
