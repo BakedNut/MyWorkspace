@@ -45,11 +45,12 @@ describe("통합 일정 추가 모달", () => {
     const close = setup();
     expect(screen.getByRole("switch", { name: "종일" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("제목"), { target: { value: "수업 준비" } });
-    fireEvent.change(screen.getByLabelText("시작"), { target: { value: "09:25" } });
+    fireEvent.change(screen.getByLabelText("시작 시"), { target: { value: "09" } });
+    fireEvent.change(screen.getByLabelText("시작 분"), { target: { value: "25" } });
     fireEvent.click(screen.getByRole("switch", { name: "종일" }));
-    expect(screen.queryByLabelText("시작")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("시작 분")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "종일" }));
-    expect(screen.getByLabelText("시작")).toHaveValue("09:25");
+    expect(screen.getByLabelText("시작 분")).toHaveValue("25");
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(close).toHaveBeenCalledWith(false));
     expect(create.mock.calls[0]?.[0]).toMatchObject({

@@ -303,15 +303,7 @@ function CalendarPage() {
                       </p>
                     ))}
                     <div className="hidden space-y-0.5 sm:block">
-                      {cls.slice(0, 2).map((c) => (
-                        <p
-                          key={c.courseId}
-                          className={cn("truncate rounded px-1 text-xs", colorClasses.school.chip)}
-                        >
-                          {c.start} {c.name}
-                        </p>
-                      ))}
-                      {dayEvents.slice(0, 3 - Math.min(cls.length, 2)).map((e) => {
+                      {dayEvents.slice(0, 3).map((e) => {
                         const cal = calById.get(e.calendarId);
                         return (
                           <p
@@ -330,6 +322,14 @@ function CalendarPage() {
                           </p>
                         );
                       })}
+                      {cls.slice(0, Math.max(0, 3 - dayEvents.length)).map((c) => (
+                        <p
+                          key={`${c.courseId}-${c.start}`}
+                          className={cn("truncate rounded px-1 text-xs", colorClasses.school.chip)}
+                        >
+                          {c.start} {c.name}
+                        </p>
+                      ))}
                       {dayEvents.length + cls.length > 3 && (
                         <p className="px-1 text-xs text-muted-foreground">
                           +{dayEvents.length + cls.length - 3}개
@@ -342,7 +342,6 @@ function CalendarPage() {
                     className="pointer-events-none relative mt-1 flex gap-0.5 sm:hidden"
                     aria-hidden
                   >
-                    {cls.length > 0 && <span className="size-1.5 rounded-full bg-cal-school" />}
                     {evs.slice(0, 3).map((e) => (
                       <span
                         key={e.id}
@@ -352,6 +351,7 @@ function CalendarPage() {
                         )}
                       />
                     ))}
+                    {cls.length > 0 && <span className="size-1.5 rounded-full bg-cal-school" />}
                   </div>
                 </li>
               );
@@ -377,17 +377,6 @@ function CalendarPage() {
             {selClasses.length + selEvents.length === 0 && (
               <li className="py-4 text-sm text-muted-foreground">일정이 없습니다.</li>
             )}
-            {selClasses.map((c) => (
-              <li key={c.courseId} className="flex gap-3 py-3 text-sm">
-                <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full bg-cal-school" />
-                <span>
-                  <span className="font-semibold">{c.name}</span>
-                  <span className="block text-muted-foreground">
-                    {c.start}–{c.end} · {c.room} · 학교 시간표
-                  </span>
-                </span>
-              </li>
-            ))}
             {selEvents.map((e) => {
               const cal = calById.get(e.calendarId);
               return (
@@ -415,6 +404,17 @@ function CalendarPage() {
                 </li>
               );
             })}
+            {selClasses.map((c) => (
+              <li key={`${c.courseId}-${c.start}`} className="flex gap-3 py-3 text-sm">
+                <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full bg-cal-school" />
+                <span>
+                  <span className="font-semibold">{c.name}</span>
+                  <span className="block text-muted-foreground">
+                    {c.start}–{c.end} · {c.room} · 학교 시간표
+                  </span>
+                </span>
+              </li>
+            ))}
           </ul>
         </section>
       </div>

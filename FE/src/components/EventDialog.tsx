@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { TimeSelect } from "./TimeSelect";
 import { isValidTimeRange } from "@/lib/schedule";
 import type { CalendarEvent, CalendarInfo, EventInput } from "@/types/domain";
 
@@ -175,27 +176,21 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
             {!form.allDay && (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="min-w-0 space-y-1.5">
-                  <Label htmlFor={`${uid}-start`}>시작</Label>
-                  <Input
-                    id={`${uid}-start`}
-                    type="time"
-                    value={form.start ?? ""}
-                    onChange={(e) => set("start", e.target.value)}
+                  <TimeSelect
+                    label="시작"
+                    value={form.start ?? "10:00"}
+                    onChange={(start) => set("start", start)}
                   />
                 </div>
                 <div className="min-w-0 space-y-1.5">
-                  <Label htmlFor={`${uid}-end`}>종료</Label>
-                  <Input
-                    id={`${uid}-end`}
-                    type="time"
-                    value={form.end ?? ""}
-                    onChange={(e) => set("end", e.target.value)}
-                    aria-invalid={timeInvalid}
-                    aria-describedby={timeInvalid ? `${uid}-time-err` : undefined}
+                  <TimeSelect
+                    label="종료"
+                    value={form.end ?? "11:00"}
+                    onChange={(end) => set("end", end)}
                   />
                 </div>
                 {timeInvalid && (
-                  <p id={`${uid}-time-err`} className="col-span-2 text-sm text-destructive">
+                  <p id={`${uid}-time-err`} className="text-sm text-destructive sm:col-span-2">
                     종료 시간이 시작 시간보다 늦어야 합니다.
                   </p>
                 )}
