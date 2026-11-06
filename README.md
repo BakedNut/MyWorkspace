@@ -6,7 +6,7 @@
 - `FE/`: React · TypeScript · Vite
 - `docs/`: 설계와 운영 문서
 
-200번 LXC에서 React·Nginx·Spring Boot, 202번 LXC에서 MySQL 8.4를 실행합니다. 일정·시간표·WOL 목록을 DB에 저장하며 Proxmox 상태와 기록을 실제로 수집합니다. iCloud 계정 연동은 추후 진행합니다. 실행 방법은 [FE/README.md](FE/README.md), [BE/README.md](BE/README.md), [운영 문서](docs/backend-operations.md)를 참고하세요.
+200번 LXC에서 React·Nginx·Spring Boot, 202번 LXC에서 MySQL 8.4를 실행합니다. 일정·시간표·WOL 목록을 DB에 저장하며 Proxmox 상태와 기록을 실제로 수집합니다. iCloud는 HTTPS 캘린더 화면에서 Apple ID·앱 전용 암호로 연결합니다. 실행 방법은 [FE/README.md](FE/README.md), [BE/README.md](BE/README.md), [운영 문서](docs/backend-operations.md)를 참고하세요.
 
 ## 브랜치
 
