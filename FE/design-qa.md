@@ -42,5 +42,5 @@ final result: passed
 
 ## 남은 범위
 
-- 서버 연결 없이 검증한 디자인 시안이다. 실제 인증·iCloud·Proxmox·MySQL·WOL 하드웨어 동작과 서버 배포는 검증 범위에 포함하지 않는다.
+- 실제 인증·iCloud·Proxmox·MySQL·WOL 하드웨어 동작은 검증 범위에 포함하지 않는다. LXC 시안 배포 검증은 [배포 문서](../docs/deployment.md)에 별도로 기록한다.
 - P3: 작은 화면에서 긴 일정 제목과 장소는 말줄임으로 표시된다. 상세 일정과 캘린더에서 확인할 수 있다.

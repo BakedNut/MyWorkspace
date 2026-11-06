@@ -17,6 +17,8 @@ npm run dev
 
 빌드 결과는 `dist/`입니다. 운영 시 Nginx에서 정적 파일을 제공하고, 페이지 직접 접속을 위해 `try_files $uri $uri/ /index.html;`을 설정합니다. `vite preview`는 로컬 확인용입니다.
 
+현재 시안은 200번 LXC의 Nginx에 배포했습니다. 접속 주소와 갱신 절차는 [배포 문서](../docs/deployment.md)를 참고하세요.
+
 ## 시안과 실제 서비스의 구분
 
 - 로그인 비밀번호는 공개된 시안용 값 `demo`입니다. 실제 접근 제어 기능이 아닙니다.
