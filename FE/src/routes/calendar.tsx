@@ -220,7 +220,7 @@ function CalendarPage() {
 
       <p className="mt-3 text-sm text-muted-foreground">
         {coarse
-          ? "날짜를 탭하면 종일 일정을 빠르게 추가할 수 있습니다."
+          ? "날짜 칸을 탭하면 아래에 그날 일정이 표시됩니다."
           : "날짜를 더블클릭하면 종일 일정을 빠르게 추가합니다. 한 번 클릭하면 아래에 그날 일정이 표시됩니다."}
       </p>
 
@@ -252,7 +252,7 @@ function CalendarPage() {
                 <li
                   key={key}
                   className={cn(
-                    "min-h-20 border-b border-r p-1 sm:min-h-28 sm:p-1.5",
+                    "group relative min-h-20 border-b border-r p-1 sm:min-h-28 sm:p-1.5",
                     !inMonth && "bg-muted/60",
                     isSel && "bg-accent",
                   )}
@@ -260,24 +260,25 @@ function CalendarPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelected(key);
-                      if (coarse) setQuickDate(key);
-                    }}
+                    onClick={() => setSelected(key)}
                     aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}, 일정 ${total}개`}
                     aria-pressed={isSel}
+                    className="absolute inset-0 size-full cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
+                  />
+                  <span
+                    aria-hidden
                     className={cn(
-                      "inline-flex size-8 items-center justify-center rounded-md text-sm tabular hover:bg-accent",
+                      "pointer-events-none relative inline-flex size-8 items-center justify-center rounded-md text-sm tabular group-hover:bg-accent",
                       !inMonth && "text-muted-foreground",
                       inMonth && wd === 0 && "text-cal-holiday",
                       inMonth && wd === 6 && "text-primary",
                       isToday &&
-                        "bg-primary font-semibold text-primary-foreground hover:bg-primary",
+                        "bg-primary font-semibold text-primary-foreground group-hover:bg-primary",
                     )}
                   >
                     {parseKey(key).d}
-                  </button>
-                  <div className="mt-0.5 hidden space-y-0.5 sm:block">
+                  </span>
+                  <div className="pointer-events-none relative mt-0.5 hidden space-y-0.5 sm:block">
                     {cls.slice(0, 2).map((c) => (
                       <p
                         key={c.courseId}
@@ -295,7 +296,7 @@ function CalendarPage() {
                           onClick={() => setEventDlg({ open: true, event: e })}
                           onDoubleClick={(ev) => ev.stopPropagation()}
                           className={cn(
-                            "block w-full truncate rounded px-1 text-left text-xs",
+                            "pointer-events-auto block w-full truncate rounded px-1 text-left text-xs",
                             cal && colorClasses[cal.color].chip,
                           )}
                         >
@@ -312,7 +313,10 @@ function CalendarPage() {
                     )}
                   </div>
                   {/* Mobile: dots only */}
-                  <div className="mt-1 flex gap-0.5 sm:hidden" aria-hidden>
+                  <div
+                    className="pointer-events-none relative mt-1 flex gap-0.5 sm:hidden"
+                    aria-hidden
+                  >
                     {cls.length > 0 && <span className="size-1.5 rounded-full bg-cal-school" />}
                     {evs.slice(0, 3).map((e) => (
                       <span
