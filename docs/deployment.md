@@ -7,9 +7,9 @@
 - 기존 NPM 주소: [MyWorkspace HTTPS](https://wol.joonkee1219.duckdns.org/).
 - NPM 201의 기존 프록시 대상과 접근 허용 목록은 변경하지 않았다.
 - 시안 비밀번호: `demo`. 실제 인증이 아니며 데이터는 접속한 브라우저의 localStorage에 저장된다.
-- 배포한 FE 소스: `2905d7060bcb93b74a52a473de53be9b1c2a99e9`.
-- 배포 디렉터리: `/var/www/myworkspace/releases/2905d70-20261106030701Z`.
-- 이전 release `94caaef-20261106025905Z` 등은 복구를 위해 보존했다.
+- 배포한 FE 소스: `834586755ca2e23ad655342cd13184e5220b22f6`.
+- 배포 디렉터리: `/var/www/myworkspace/releases/8345867-20261106031733Z`.
+- 이전 release `2905d70-20261106030701Z` 등은 복구를 위해 보존했다.
 - 현재 경로: `/var/www/myworkspace/current` 심볼릭 링크.
 - Nginx는 실행 중이며 LXC 부팅 시 자동으로 시작한다.
 
@@ -46,7 +46,8 @@ Nginx가 읽을 수 있도록 상위 디렉터리는 755, 빌드 파일은 644 �
 - 시간표 표 편집 배포에서는 내부망·HTTPS 양쪽의 실제 Chromium에서 빈 칸 추가, 블록 선택, `18:25–19:15` 분 단위 위치, 교수명·강의실 저장과 새로고침 유지, 중복 시간 차단, 취소·삭제, 모의 API 저장 실패 시 입력 보존, 모바일 편집·내부 스크롤을 확인했다. 페이지 실행 오류는 없었다.
 - 새 release의 빌드 파일 3개는 전송 전후 SHA-256이 일치했고 Nginx 설정 검사·서비스 상태도 통과했다. 이번 변경에서 NPM·방화벽 설정은 바꾸지 않았다.
 - 시간표 분 선택을 `00, 05, …, 55`로 변경했다. PC·모바일에서 시와 분을 따로 선택해 저장·새로고침을 검증했고, 기존 5분 간격 밖 시각은 반올림하지 않고 보존한다.
-- 최신 구현 커밋의 [GitHub Actions 검사](https://github.com/BakedNut/MyWorkspace/actions/runs/42154481912)가 성공했다. 자동 테스트 27개, 타입 검사·빌드·린트 오류 0건이며 기존 Fast Refresh 경고 2개는 남아 있다.
+- 캘린더 날짜 선택 버튼을 칸 전체로 넓혔다. 내부망·HTTPS의 PC·모바일 Chromium에서 숫자 밖 칸 우하단 선택, 일정 편집 버튼, 더블클릭 종일 일정 추가, 키보드 Enter/Space 선택을 확인했다. 모바일은 탭으로 날짜를 선택하며 별도 버튼으로 종일 일정을 추가한다. 페이지 실행 오류와 페이지 가로 넘침은 없었다.
+- 최신 구현 커밋의 [GitHub Actions 검사](https://github.com/BakedNut/MyWorkspace/actions/runs/42155619795)가 성공했다. 자동 테스트 27개, 타입 검사·빌드·린트 오류 0건이며 기존 Fast Refresh 경고 2개는 남아 있다.
 
 백엔드, 실제 iCloud·Proxmox·WOL 하드웨어 연동은 이 배포에 포함하지 않는다.
 
