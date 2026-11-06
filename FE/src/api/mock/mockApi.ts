@@ -52,7 +52,9 @@ const SESSION_KEY = "session";
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 const calendars = () =>
-  load<CalendarInfo[]>("calendars", seedCalendars).filter((c) => c.source !== "local");
+  load<CalendarInfo[]>("calendars", seedCalendars)
+    .filter((c) => c.source !== "local")
+    .map((c) => (c.name === "iCloud 개인" ? { ...c, name: "iCloud" } : c));
 // Retiring the local calendar must not discard events saved by earlier previews.
 const events = () =>
   load<CalendarEvent[]>("events", seedEvents).map((e) =>

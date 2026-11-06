@@ -10,7 +10,7 @@ import { addDays, todayKey, weekday } from "@/lib/time";
 // All demo data is generated relative to the current Asia/Seoul date.
 
 export const seedCalendars = (): CalendarInfo[] => [
-  { id: "cal-icloud", name: "iCloud 개인", source: "icloud", color: "icloud", readOnly: false },
+  { id: "cal-icloud", name: "iCloud", source: "icloud", color: "icloud", readOnly: false },
   { id: "cal-holiday", name: "공휴일 (예시)", source: "holiday", color: "holiday", readOnly: true },
 ];
 
