@@ -7,8 +7,9 @@
 - 기존 NPM 주소: [MyWorkspace HTTPS](https://wol.joonkee1219.duckdns.org/).
 - NPM 201의 기존 프록시 대상과 접근 허용 목록은 변경하지 않았다.
 - 시안 비밀번호: `demo`. 실제 인증이 아니며 데이터는 접속한 브라우저의 localStorage에 저장된다.
-- 배포한 FE 소스: `5ad5305bea182f29a95d0fb4481150d65eff90f6`.
-- 배포 디렉터리: `/var/www/myworkspace/releases/5ad5305-20261106022016Z`.
+- 배포한 FE 소스: `94caaef6cc577f4816be38a56909d00566d40e35`.
+- 배포 디렉터리: `/var/www/myworkspace/releases/94caaef-20261106025905Z`.
+- 이전 release `5ad5305-20261106022016Z`는 복구를 위해 보존했다.
 - 현재 경로: `/var/www/myworkspace/current` 심볼릭 링크.
 - Nginx는 실행 중이며 LXC 부팅 시 자동으로 시작한다.
 
@@ -42,6 +43,9 @@ Nginx가 읽을 수 있도록 상위 디렉터리는 755, 빌드 파일은 644 �
 - 잘못된 정적 파일의 404, 미구현 API의 503 확인.
 - 일반 DNS 경로와 정상 인증서 검증을 통한 기존 NPM HTTPS 200 확인.
 - 내부망·HTTPS 두 주소에서 PC(1440×1024)와 모바일(390×844)의 로그인, 네 페이지 이동, 직접 접속·새로고침, 모바일 메뉴를 검증했다. 페이지 실행 오류와 실패한 리소스 요청은 없었다.
+- 시간표 표 편집 배포에서는 내부망·HTTPS 양쪽의 실제 Chromium에서 빈 칸 추가, 블록 선택, `18:25–19:15` 분 단위 위치, 교수명·강의실 저장과 새로고침 유지, 중복 시간 차단, 취소·삭제, 모의 API 저장 실패 시 입력 보존, 모바일 편집·내부 스크롤을 확인했다. 페이지 실행 오류는 없었다.
+- 새 release의 빌드 파일 3개는 전송 전후 SHA-256이 일치했고 Nginx 설정 검사·서비스 상태도 통과했다. 이번 변경에서 NPM·방화벽 설정은 바꾸지 않았다.
+- 시간표 구현 커밋의 [GitHub Actions 검사](https://github.com/BakedNut/MyWorkspace/actions/runs/42153656879)가 성공했다. 자동 테스트 26개, 타입 검사·빌드·린트 오류 0건이며 기존 Fast Refresh 경고 2개는 남아 있다.
 
 백엔드, 실제 iCloud·Proxmox·WOL 하드웨어 연동은 이 배포에 포함하지 않는다.
 
