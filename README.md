@@ -1,6 +1,6 @@
 # MyWorkspace
 
-개인 일정과 학교 시간표, Proxmox 모니터링, 두 PC의 Wake-on-LAN을 관리하는 개인 웹사이트입니다.
+개인 일정과 학교 시간표, Proxmox 모니터링, 등록한 PC의 Wake-on-LAN을 관리하는 개인 웹사이트입니다.
 
 - `BE/`: Java 21 · Spring Boot · Spring Security · JPA · MySQL
 - `FE/`: React · TypeScript · Vite
