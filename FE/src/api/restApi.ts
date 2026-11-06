@@ -53,6 +53,17 @@ export async function request<T>(
 }
 
 export const restApi: ApiClient = {
+  security: {
+    getStatus: () => request("/security"),
+    async changePassword(input) {
+      await request("/security/password", "POST", input);
+      csrf = null;
+    },
+    beginOtp: (currentPassword) => request("/security/otp/setup", "POST", { currentPassword }),
+    confirmOtp: (setupToken, code) =>
+      request("/security/otp/confirm", "POST", { setupToken, code }),
+    disableOtp: (input) => request("/security/otp", "DELETE", input),
+  },
   auth: {
     getSession: () => request("/auth/session"),
     async login(password) {

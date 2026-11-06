@@ -78,6 +78,28 @@ function validateEvent(input: EventInput) {
 const lastWake = new Map<WolDeviceId, number>();
 
 export const mockApi: ApiClient = {
+  security: {
+    async getStatus() {
+      return {
+        otpEnabled: false,
+        passwordChanged: false,
+        requiresHttps: false,
+        secureSetupUrl: null,
+      };
+    },
+    async changePassword() {
+      throw new ApiError("암호 설정은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async beginOtp() {
+      throw new ApiError("암호 설정은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async confirmOtp() {
+      throw new ApiError("암호 설정은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+    async disableOtp() {
+      throw new ApiError("암호 설정은 실제 서비스에서 진행하세요.", "READ_ONLY");
+    },
+  },
   auth: {
     async login(password) {
       await delay(400);

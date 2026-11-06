@@ -10,6 +10,10 @@ import type {
   ServerHistory,
   ServerRange,
   Session,
+  SecurityStatus,
+  SecurityProof,
+  PasswordChange,
+  OtpSetup,
   Timetable,
   TodayItem,
   WakeResult,
@@ -30,6 +34,13 @@ import type {
  * `restApi` implements the live service; `mockApi` is for previews and unit tests.
  */
 export interface ApiClient {
+  security: {
+    getStatus(): Promise<SecurityStatus>;
+    changePassword(input: PasswordChange): Promise<void>;
+    beginOtp(currentPassword: string): Promise<OtpSetup>;
+    confirmOtp(setupToken: string, code: string): Promise<void>;
+    disableOtp(input: SecurityProof): Promise<void>;
+  };
   auth: {
     login(password: string): Promise<Session>;
     logout(): Promise<void>;

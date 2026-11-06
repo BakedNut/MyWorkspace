@@ -12,6 +12,27 @@ export interface Session {
   authenticated: true;
   expiresAt: string; // ISO
 }
+export interface SecurityStatus {
+  otpEnabled: boolean;
+  passwordChanged: boolean;
+  requiresHttps: boolean;
+  secureSetupUrl: string | null;
+}
+export interface SecurityProof {
+  method: "password" | "otp";
+  currentPassword?: string;
+  otp?: string;
+}
+export interface PasswordChange extends SecurityProof {
+  newPassword: string;
+  confirmPassword: string;
+}
+export interface OtpSetup {
+  secret: string;
+  setupToken: string;
+  uri: string;
+}
+
 // ---------- /api/calendar ----------
 export type CalendarSource = "icloud" | "local" | "holiday";
 export type CalendarColor = "icloud" | "personal" | "holiday" | "school";

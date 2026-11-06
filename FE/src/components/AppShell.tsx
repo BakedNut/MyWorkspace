@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { CalendarDays, Home, LogOut, Menu, Power, Server, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { CalendarDays, Home, LogOut, Menu, Power, Server, Settings, X } from "lucide-react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { isPreview } from "@/api";
@@ -13,12 +13,16 @@ const NAV = [
   { to: "/server", label: "서버 대시보드", icon: Server },
   { to: "/wol", label: "WOL", icon: Power },
 ] as const;
+const SecurityDialog = lazy(() =>
+  import("./SecurityDialog").then((module) => ({ default: module.SecurityDialog })),
+);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { status, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (path !== "/login" && status === "anon") navigate({ to: "/login" });
@@ -55,6 +59,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         </ul>
       </nav>
       <div className="mt-auto space-y-3 px-6 pb-6 pt-4 text-sm">
+        <button
+          type="button"
+          disabled={status !== "authed"}
+          onClick={() => {
+            setOpen(false);
+            setSettingsOpen(true);
+          }}
+          className="flex min-h-11 items-center gap-2 rounded-md px-1 text-muted-foreground hover:text-foreground"
+          aria-label="암호 설정"
+        >
+          <Settings aria-hidden className="size-4" />
+          암호 설정
+        </button>
         <LegacyImportDialog />
         {isPreview && (
           <p className="rounded-md border border-sidebar-border px-3 py-2 text-xs text-muted-foreground">
@@ -128,6 +145,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </p>
         )}
       </main>
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SecurityDialog open onOpenChange={setSettingsOpen} />
+        </Suspense>
+      )}
     </div>
   );
 }
