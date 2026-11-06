@@ -97,7 +97,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] w-[94vw] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{readOnly ? "일정 보기" : event ? "일정 수정" : "일정 추가"}</DialogTitle>
           <DialogDescription>
@@ -106,7 +106,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
               : "필수 항목은 제목과 날짜입니다."}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4" noValidate>
+        <form onSubmit={submit} className="min-w-0 space-y-4" noValidate>
           {error && (
             <div
               role="alert"
@@ -115,8 +115,8 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
               {error} 입력한 내용은 그대로 남아 있으니 다시 시도하세요.
             </div>
           )}
-          <fieldset disabled={readOnly} className="space-y-4">
-            <div className="space-y-1.5">
+          <fieldset disabled={readOnly} className="min-w-0 space-y-4">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor={`${uid}-title`}>제목</Label>
               <Input
                 id={`${uid}-title`}
@@ -127,7 +127,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
               />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
+              <div className="min-w-0 space-y-1.5">
                 <Label htmlFor={`${uid}-cal`}>캘린더</Label>
                 <select
                   id={`${uid}-cal`}
@@ -142,7 +142,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                   ))}
                 </select>
               </div>
-              <div className="space-y-1.5">
+              <div className="min-w-0 space-y-1.5">
                 <Label htmlFor={`${uid}-date`}>날짜</Label>
                 <Input
                   id={`${uid}-date`}
@@ -162,8 +162,8 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
               <Label htmlFor={`${uid}-allday`}>종일</Label>
             </div>
             {!form.allDay && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="min-w-0 space-y-1.5">
                   <Label htmlFor={`${uid}-start`}>시작</Label>
                   <Input
                     id={`${uid}-start`}
@@ -172,7 +172,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                     onChange={(e) => set("start", e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5">
+                <div className="min-w-0 space-y-1.5">
                   <Label htmlFor={`${uid}-end`}>종료</Label>
                   <Input
                     id={`${uid}-end`}
@@ -190,7 +190,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                 )}
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor={`${uid}-loc`}>장소 (선택)</Label>
               <Input
                 id={`${uid}-loc`}
@@ -198,7 +198,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                 onChange={(e) => set("location", e.target.value)}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor={`${uid}-memo`}>메모 (선택)</Label>
               <Textarea
                 id={`${uid}-memo`}
