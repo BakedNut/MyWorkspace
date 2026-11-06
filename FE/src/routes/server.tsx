@@ -342,6 +342,7 @@ function ServerPage() {
                         </p>
                         <UsageChart
                           label={`${g.name} CPU`}
+                          compact
                           range="1D"
                           points={record?.cpu}
                           from={guestHistory?.from ?? 0}
@@ -358,6 +359,7 @@ function ServerPage() {
                         </p>
                         <UsageChart
                           label={`${g.name} RAM`}
+                          compact
                           range="1D"
                           points={record?.ram}
                           from={guestHistory?.from ?? 0}

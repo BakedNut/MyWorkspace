@@ -1,5 +1,6 @@
 import { usagePath } from "@/lib/server-history";
 import { TIME_ZONE } from "@/lib/time";
+import { cn } from "@/lib/utils";
 import type { ServerRange, UsagePoint } from "@/types/domain";
 
 export function UsageChart({
@@ -9,6 +10,7 @@ export function UsageChart({
   label,
   range,
   empty = "기록 없음",
+  compact = false,
 }: {
   points?: UsagePoint[] | undefined;
   from: number;
@@ -16,6 +18,7 @@ export function UsageChart({
   label: string;
   range: ServerRange;
   empty?: string;
+  compact?: boolean;
 }) {
   const valid = points.filter(
     (p) => p.value !== null && Number.isFinite(p.value) && p.at >= from && p.at <= to,
@@ -23,7 +26,9 @@ export function UsageChart({
   const format = (at: number) =>
     new Intl.DateTimeFormat("ko-KR", {
       timeZone: TIME_ZONE,
-      ...(range === "1W" || range === "1M" ? { month: "numeric", day: "numeric" } : {}),
+      ...(range === "1D" || range === "1W" || range === "1M"
+        ? { month: "numeric", day: "numeric" }
+        : {}),
       hour: "2-digit",
       minute: "2-digit",
       ...(range === "1m" ? { second: "2-digit" } : {}),
@@ -32,7 +37,14 @@ export function UsageChart({
   return (
     <figure aria-label={`${label} ${range} 사용률 그래프`} className="min-w-0">
       {valid.length < 2 ? (
-        <div className="grid h-24 place-items-center text-xs text-muted-foreground">{empty}</div>
+        <div
+          className={cn(
+            "grid place-items-center text-xs text-muted-foreground",
+            compact ? "h-14" : "h-24",
+          )}
+        >
+          {empty}
+        </div>
       ) : (
         <>
           <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -42,7 +54,7 @@ export function UsageChart({
           <svg
             viewBox="0 0 300 88"
             preserveAspectRatio="none"
-            className="mt-1 h-24 w-full overflow-visible"
+            className={cn("mt-1 w-full overflow-visible", compact ? "h-14" : "h-24")}
             aria-hidden
           >
             {[0, 44, 88].map((y) => (
