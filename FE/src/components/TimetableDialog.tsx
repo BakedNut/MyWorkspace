@@ -26,6 +26,56 @@ import { cn } from "@/lib/utils";
 import type { Course, Timetable } from "@/types/domain";
 import { selectClass } from "./EventDialog";
 
+function TimetableTimeSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange(value: string): void;
+}) {
+  const [hour = "00", minute = "00"] = value.split(":");
+  return (
+    <fieldset className="grid grid-cols-[2rem_1fr_1fr] items-center gap-2">
+      <legend className="sr-only">{label} 시간</legend>
+      <span aria-hidden className="text-sm">
+        {label}
+      </span>
+      <select
+        aria-label={`${label} 시`}
+        className={selectClass}
+        value={hour}
+        onChange={(e) => onChange(`${e.target.value}:${minute}`)}
+      >
+        {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => (
+          <option key={h} value={h}>
+            {h}시
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label={`${label} 분`}
+        className={selectClass}
+        value={minute}
+        onChange={(e) => onChange(`${hour}:${e.target.value}`)}
+      >
+        {/* Preserve previously saved times without silently rounding them. */}
+        {Number(minute) % 5 !== 0 && (
+          <option value={minute} disabled>
+            {minute}분 (기존)
+          </option>
+        )}
+        {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0")).map((m) => (
+          <option key={m} value={m}>
+            {m}분
+          </option>
+        ))}
+      </select>
+    </fieldset>
+  );
+}
+
 export function TimetableDialog({
   open,
   onOpenChange,
@@ -101,7 +151,7 @@ export function TimetableDialog({
       professor: "",
       weekday,
       start: timetableTime(minutes),
-      end: timetableTime(Math.min(minutes + 60, 1439)),
+      end: timetableTime(Math.min(minutes + 60, 1435)),
       cancelledDates: [],
     };
     setForm({ ...form, courses: [...form.courses, course] });
@@ -176,7 +226,7 @@ export function TimetableDialog({
                       {form.courses.length}개 수업
                     </span>
                   </h3>
-                  <span className="text-xs text-muted-foreground">분 단위 편집 가능</span>
+                  <span className="text-xs text-muted-foreground">5분 단위 선택</span>
                 </div>
                 <div
                   className="max-h-[480px] overflow-auto rounded-lg border"
@@ -349,27 +399,17 @@ export function TimetableDialog({
                         ))}
                       </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor={`${uid}-start`}>시작</Label>
-                        <Input
-                          id={`${uid}-start`}
-                          type="time"
-                          step={60}
-                          value={selected.start}
-                          onChange={(e) => updateCourse({ start: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor={`${uid}-end`}>종료</Label>
-                        <Input
-                          id={`${uid}-end`}
-                          type="time"
-                          step={60}
-                          value={selected.end}
-                          onChange={(e) => updateCourse({ end: e.target.value })}
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <TimetableTimeSelect
+                        label="시작"
+                        value={selected.start}
+                        onChange={(start) => updateCourse({ start })}
+                      />
+                      <TimetableTimeSelect
+                        label="종료"
+                        value={selected.end}
+                        onChange={(end) => updateCourse({ end })}
+                      />
                     </div>
                     <div className="space-y-2 border-t pt-3">
                       <Label htmlFor={`${uid}-cancel`}>휴강일</Label>

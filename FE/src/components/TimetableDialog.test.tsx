@@ -45,11 +45,11 @@ describe("시간표 표 편집 모달", () => {
     fireEvent.change(screen.getByLabelText("과목명"), { target: { value: "과정지도" } });
     fireEvent.change(screen.getByLabelText("교수명"), { target: { value: "임충규" } });
     fireEvent.change(screen.getByLabelText("강의실"), { target: { value: "6201" } });
-    fireEvent.change(screen.getByLabelText("시작", { exact: true }), {
-      target: { value: "18:25" },
+    fireEvent.change(screen.getByLabelText("시작 분"), {
+      target: { value: "25" },
     });
-    fireEvent.change(screen.getByLabelText("종료", { exact: true }), {
-      target: { value: "19:15" },
+    fireEvent.change(screen.getByLabelText("종료 분"), {
+      target: { value: "15" },
     });
     fireEvent.click(screen.getByRole("button", { name: "시간표 저장" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
@@ -65,6 +65,37 @@ describe("시간표 표 편집 모달", () => {
       }),
     ]);
     expect(timetable.courses).toHaveLength(1);
+  });
+
+  it("분 선택은 5분 간격이며 기존 비정규 시각은 반올림하지 않는다", () => {
+    const { rerender, view } = setup();
+    const minutes = screen.getByLabelText<HTMLSelectElement>("시작 분");
+    expect(Array.from(minutes.options, (o) => o.value)).toEqual([
+      "00",
+      "05",
+      "10",
+      "15",
+      "20",
+      "25",
+      "30",
+      "35",
+      "40",
+      "45",
+      "50",
+      "55",
+    ]);
+    rerender(view(timetable, false));
+    rerender(
+      view({
+        ...timetable,
+        courses: timetable.courses.map((c) => ({ ...c, start: "09:07", end: "11:52" })),
+      }),
+    );
+    expect(screen.getByLabelText("시작 분")).toHaveValue("07");
+    expect(screen.getByRole("option", { name: "07분 (기존)" })).toBeDisabled();
+    expect(screen.getByLabelText("종료 분")).toHaveValue("52");
+    fireEvent.change(screen.getByLabelText("시작 분"), { target: { value: "10" } });
+    expect(screen.getByLabelText("시작 분")).toHaveValue("10");
   });
 
   it("중복 수업의 저장을 막고 서버 저장 실패에도 입력을 유지한다", async () => {
