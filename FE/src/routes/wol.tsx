@@ -11,7 +11,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { ApiError, api } from "@/api";
+import { ApiError, api, isPreview } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,9 +59,11 @@ function WolPage() {
           <Settings2 aria-hidden /> WOL 리스트 수정
         </Button>
       </div>
-      <p className="mt-2 inline-block rounded-md bg-secondary px-2.5 py-1 text-sm text-secondary-foreground">
-        데모 모드 — 실제 매직 패킷은 전송되지 않습니다.
-      </p>
+      {isPreview && (
+        <p className="mt-2 inline-block rounded-md bg-secondary px-2.5 py-1 text-sm text-secondary-foreground">
+          데모 모드 — 실제 매직 패킷은 전송되지 않습니다.
+        </p>
+      )}
 
       {isLoading && (
         <p className="mt-8 text-muted-foreground" role="status">
