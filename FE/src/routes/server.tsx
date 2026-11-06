@@ -7,7 +7,7 @@ import { mockControls, type ServerScenario } from "@/api/mock/mockApi";
 import { selectClass } from "@/components/EventDialog";
 import { Button } from "@/components/ui/button";
 import { UsageChart } from "@/components/UsageChart";
-import { HISTORY_WINDOWS } from "@/lib/server-history";
+import { formatRate, HISTORY_WINDOWS } from "@/lib/server-history";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/time";
 import { useNow } from "@/lib/use-now";
@@ -77,11 +77,43 @@ const statusLabel: Record<GuestStatus["status"], { text: string; cls: string }> 
   paused: { text: "일시정지", cls: "bg-warning" },
 };
 
+function RangePicker({
+  value,
+  onChange,
+  label,
+}: {
+  value: ServerRange;
+  onChange(value: ServerRange): void;
+  label: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex gap-1 rounded-lg border p-1">
+      {(Object.keys(HISTORY_WINDOWS) as ServerRange[]).map((r) => (
+        <button
+          key={r}
+          type="button"
+          aria-pressed={value === r}
+          onClick={() => onChange(r)}
+          className={cn(
+            "min-h-9 rounded-md px-3 text-xs",
+            value === r
+              ? "bg-accent font-semibold text-primary"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {r}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ServerPage() {
   const uid = useId();
   const qc = useQueryClient();
   const now = useNow(15_000);
   const [range, setRange] = useState<ServerRange>("1D");
+  const [guestRange, setGuestRange] = useState<ServerRange>("1D");
   const [scenario, setScenario] = useState<ServerScenario>(() =>
     typeof window === "undefined" ? "normal" : mockControls.get().serverScenario,
   );
@@ -100,24 +132,24 @@ function ServerPage() {
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const daily = useQuery({
-    queryKey: ["server-history", scenario, "1D"],
-    queryFn: () => api.server.getHistory("1D"),
+  const guestQuery = useQuery({
+    queryKey: ["server-history", scenario, guestRange],
+    queryFn: () => api.server.getHistory(guestRange),
     enabled: !!data,
     refetchInterval: 60_000,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const hostHistory = history.data;
-  const guestHistory = daily.data;
+  const guestHistory = guestQuery.data;
   const hostEmpty = history.isPending
     ? "기록을 불러오는 중…"
     : history.error
       ? "기록을 불러오지 못했습니다."
       : "기록 없음";
-  const guestEmpty = daily.isPending
+  const guestEmpty = guestQuery.isPending
     ? "기록을 불러오는 중…"
-    : daily.error
+    : guestQuery.error
       ? "기록을 불러오지 못했습니다."
       : "기록 없음";
   const stale = data && now ? now.getTime() - new Date(data.updatedAt).getTime() > STALE_MS : false;
@@ -211,37 +243,22 @@ function ServerPage() {
               <h2 id="host-title" className="text-lg font-bold">
                 {data.hostName}
               </h2>
-              <div
-                role="group"
-                aria-label="호스트 그래프 기간"
-                className="flex gap-1 rounded-lg border p-1"
-              >
-                {(Object.keys(HISTORY_WINDOWS) as ServerRange[]).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    aria-pressed={range === r}
-                    onClick={() => setRange(r)}
-                    className={cn(
-                      "min-h-9 rounded-md px-3 text-xs",
-                      range === r
-                        ? "bg-accent font-semibold text-primary"
-                        : "text-muted-foreground hover:bg-muted",
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
+              <RangePicker value={range} onChange={setRange} label="호스트 그래프 기간" />
             </div>
-            <dl className="mt-4 grid gap-6 border-y py-6 sm:grid-cols-2">
+            <dl className="mt-4 grid grid-cols-1 gap-6 border-y py-6 lg:grid-cols-3">
               <div className="space-y-2">
                 <dt className="flex justify-between text-sm">
                   <span className="font-semibold">CPU</span>
-                  <span className="text-muted-foreground">{data.cpu.cores}코어</span>
+                  <span
+                    className="text-right text-xs text-muted-foreground"
+                    aria-label="CPU 구성과 온도"
+                  >
+                    {data.cpu.cores}코어 ⋅{" "}
+                    {data.cpu.tempC === null ? "온도 지원 안 됨" : `온도 ${data.cpu.tempC}°C`}
+                  </span>
                 </dt>
                 <dd className="space-y-2">
-                  <p className="text-3xl font-bold tabular">{data.cpu.usagePercent}%</p>
+                  <p className="min-h-10 text-3xl font-bold tabular">{data.cpu.usagePercent}%</p>
                   <UsageChart
                     label="호스트 CPU"
                     range={range}
@@ -250,9 +267,6 @@ function ServerPage() {
                     to={hostHistory?.to ?? 1}
                     empty={hostEmpty}
                   />
-                  <p className="text-sm">
-                    온도 <Temp c={data.cpu.tempC} />
-                  </p>
                 </dd>
               </div>
               <div className="space-y-2">
@@ -263,13 +277,35 @@ function ServerPage() {
                   </span>
                 </dt>
                 <dd className="space-y-2">
-                  <p className="text-3xl font-bold tabular">
+                  <p className="min-h-10 text-3xl font-bold tabular">
                     {pct(data.ram.usedMb, data.ram.totalMb)}%
                   </p>
                   <UsageChart
                     label="호스트 RAM"
                     range={range}
                     points={hostHistory?.host.ram}
+                    from={hostHistory?.from ?? 0}
+                    to={hostHistory?.to ?? 1}
+                    empty={hostEmpty}
+                  />
+                </dd>
+              </div>
+              <div className="space-y-2">
+                <dt className="flex justify-between text-sm">
+                  <span className="font-semibold">네트워크</span>
+                  <span className="text-xs text-muted-foreground">Input ⋅ Output</span>
+                </dt>
+                <dd className="space-y-2">
+                  <div className="flex min-h-10 flex-col justify-center text-xs tabular-nums">
+                    <p>Input {formatRate(data.network.inputBytesPerSecond)}</p>
+                    <p>Output {formatRate(data.network.outputBytesPerSecond)}</p>
+                  </div>
+                  <UsageChart
+                    label="호스트 네트워크"
+                    range={range}
+                    unit="bytesPerSecond"
+                    points={hostHistory?.host.input}
+                    secondaryPoints={hostHistory?.host.output ?? []}
                     from={hostHistory?.from ?? 0}
                     to={hostHistory?.to ?? 1}
                     empty={hostEmpty}
@@ -306,10 +342,13 @@ function ServerPage() {
           </section>
 
           <section aria-labelledby="guest-title">
-            <h2 id="guest-title" className="text-lg font-bold">
-              VM · LXC
-            </h2>
-            <ul className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 id="guest-title" className="text-lg font-bold">
+                VM · LXC
+              </h2>
+              <RangePicker value={guestRange} onChange={setGuestRange} label="VM/LXC 그래프 기간" />
+            </div>
+            <ul className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
               {data.guests.map((g) => {
                 const record = guestHistory?.guests[`${g.type}-${g.id}`];
                 return (
@@ -331,46 +370,82 @@ function ServerPage() {
                         {statusLabel[g.status].text}
                       </span>
                     </div>
-                    <p className="mt-3 text-xs text-muted-foreground">최근 1일 · 1D</p>
-                    <div className="mt-3 space-y-4">
-                      <div>
-                        <p className="mb-1 flex justify-between text-sm">
-                          <span className="font-medium">CPU</span>
-                          <span className="tabular-nums">
+                    <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5">
+                      <div className="min-w-0">
+                        <div className="mb-2 min-h-14 space-y-1">
+                          <p className="text-sm font-medium">CPU</p>
+                          <p className="text-xs tabular-nums text-muted-foreground">
                             {g.status === "running" ? `${g.cpuPercent}%` : "—"}
-                          </span>
-                        </p>
+                          </p>
+                        </div>
                         <UsageChart
                           label={`${g.name} CPU`}
                           compact
-                          range="1D"
+                          range={guestRange}
                           points={record?.cpu}
                           from={guestHistory?.from ?? 0}
                           to={guestHistory?.to ?? 1}
                           empty={guestEmpty}
                         />
                       </div>
-                      <div>
-                        <p className="mb-1 flex justify-between text-sm">
-                          <span className="font-medium">RAM</span>
-                          <span className="tabular-nums">
-                            {g.status === "stopped" ? "—" : `${pct(g.memUsedMb, g.memTotalMb)}%`}
-                          </span>
-                        </p>
+                      <div className="min-w-0">
+                        <div className="mb-2 min-h-14 space-y-1">
+                          <p className="text-sm font-medium">RAM</p>
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            {pct(g.memUsedMb, g.memTotalMb)}% ⋅ {gb(g.memUsedMb)} /{" "}
+                            {gb(g.memTotalMb)}
+                          </p>
+                        </div>
                         <UsageChart
                           label={`${g.name} RAM`}
                           compact
-                          range="1D"
+                          range={guestRange}
                           points={record?.ram}
                           from={guestHistory?.from ?? 0}
                           to={guestHistory?.to ?? 1}
                           empty={guestEmpty}
                         />
-                        <p className="mt-2 text-right text-xs tabular-nums text-muted-foreground">
-                          {g.status === "stopped"
-                            ? "중지된 게스트"
-                            : `${gb(g.memUsedMb)} / ${gb(g.memTotalMb)}`}
-                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="mb-2 min-h-14 space-y-1">
+                          <p className="text-sm font-medium">네트워크</p>
+                          <p className="text-[11px] tabular-nums text-muted-foreground">
+                            Input {formatRate(g.network.inputBytesPerSecond)} ⋅ Output{" "}
+                            {formatRate(g.network.outputBytesPerSecond)}
+                          </p>
+                        </div>
+                        <UsageChart
+                          label={`${g.name} 네트워크`}
+                          compact
+                          range={guestRange}
+                          unit="bytesPerSecond"
+                          points={record?.input}
+                          secondaryPoints={record?.output ?? []}
+                          from={guestHistory?.from ?? 0}
+                          to={guestHistory?.to ?? 1}
+                          empty={guestEmpty}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="mb-2 min-h-14 space-y-1">
+                          <p className="text-sm font-medium">디스크</p>
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            {g.disk.usedGb === null
+                              ? `사용량 미지원 ⋅ 할당 ${g.disk.totalGb.toFixed(1)} GB`
+                              : `${pct(g.disk.usedGb, g.disk.totalGb)}% ⋅ ${g.disk.usedGb.toFixed(1)} GB / ${g.disk.totalGb.toFixed(1)} GB`}
+                          </p>
+                        </div>
+                        <UsageChart
+                          label={`${g.name} 디스크`}
+                          compact
+                          range={guestRange}
+                          points={record?.disk}
+                          from={guestHistory?.from ?? 0}
+                          to={guestHistory?.to ?? 1}
+                          empty={
+                            g.disk.usedGb === null ? "사용량을 확인할 수 없습니다." : guestEmpty
+                          }
+                        />
                       </div>
                     </div>
                   </li>

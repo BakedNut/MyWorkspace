@@ -86,6 +86,11 @@ export interface StorageUsage {
   tempC: number | null; // null = sensor not supported
 }
 
+export interface NetworkUsage {
+  inputBytesPerSecond: number;
+  outputBytesPerSecond: number;
+}
+
 export interface GuestStatus {
   id: number;
   name: string;
@@ -94,6 +99,8 @@ export interface GuestStatus {
   cpuPercent: number;
   memUsedMb: number;
   memTotalMb: number;
+  network: NetworkUsage;
+  disk: { usedGb: number | null; totalGb: number }; // null when guest filesystem usage is unavailable
 }
 
 export interface ServerStatus {
@@ -101,6 +108,7 @@ export interface ServerStatus {
   updatedAt: string; // ISO
   cpu: { usagePercent: number; cores: number; tempC: number | null };
   ram: { usedMb: number; totalMb: number };
+  network: NetworkUsage;
   storages: StorageUsage[];
   guests: GuestStatus[];
 }
@@ -110,11 +118,18 @@ export interface UsagePoint {
   at: number;
   value: number | null;
 }
+export interface ResourceHistory {
+  cpu: UsagePoint[];
+  ram: UsagePoint[];
+  input: UsagePoint[]; // bytes per second, not cumulative bytes
+  output: UsagePoint[];
+}
+
 export interface ServerHistory {
   from: number;
   to: number;
-  host: { cpu: UsagePoint[]; ram: UsagePoint[] };
-  guests: Record<string, { cpu: UsagePoint[]; ram: UsagePoint[] }>;
+  host: ResourceHistory;
+  guests: Record<string, ResourceHistory & { disk: UsagePoint[] }>;
 }
 
 // ---------- /api/wol/devices ----------

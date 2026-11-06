@@ -114,6 +114,7 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
   updatedAt: updatedAt.toISOString(),
   cpu: { usagePercent: 23, cores: 8, tempC: withTemps ? 48 : null },
   ram: { usedMb: 21_340, totalMb: 32_768 },
+  network: { inputBytesPerSecond: 2_600_000, outputBytesPerSecond: 810_000 },
   storages: [
     { name: "local-nvme (OS)", usedGb: 118, totalGb: 476, tempC: withTemps ? 41 : null },
     { name: "data-hdd", usedGb: 2_870, totalGb: 3_726, tempC: withTemps ? 36 : null },
@@ -128,6 +129,8 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
       cpuPercent: 12,
       memUsedMb: 3_100,
       memTotalMb: 4_096,
+      network: { inputBytesPerSecond: 1_400_000, outputBytesPerSecond: 520_000 },
+      disk: { usedGb: 24.5, totalGb: 64 },
     },
     {
       id: 101,
@@ -137,6 +140,8 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
       cpuPercent: 0,
       memUsedMb: 0,
       memTotalMb: 8_192,
+      network: { inputBytesPerSecond: 0, outputBytesPerSecond: 0 },
+      disk: { usedGb: null, totalGb: 80 },
     },
     {
       id: 200,
@@ -146,6 +151,8 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
       cpuPercent: 2,
       memUsedMb: 180,
       memTotalMb: 512,
+      network: { inputBytesPerSecond: 120_000, outputBytesPerSecond: 240_000 },
+      disk: { usedGb: 3.8, totalGb: 20 },
     },
     {
       id: 201,
@@ -155,6 +162,8 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
       cpuPercent: 6,
       memUsedMb: 1_450,
       memTotalMb: 2_048,
+      network: { inputBytesPerSecond: 65_000, outputBytesPerSecond: 28_000 },
+      disk: { usedGb: 8.2, totalGb: 32 },
     },
     {
       id: 202,
@@ -164,6 +173,8 @@ export const sampleServerStatus = (updatedAt: Date, withTemps: boolean): ServerS
       cpuPercent: 0,
       memUsedMb: 220,
       memTotalMb: 1_024,
+      network: { inputBytesPerSecond: 0, outputBytesPerSecond: 0 },
+      disk: { usedGb: 11.2, totalGb: 40 },
     },
   ],
 });
