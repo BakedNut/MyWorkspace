@@ -31,10 +31,17 @@ def backup():
         process.wait(timeout=60)
         if process.returncode:raise RuntimeError("Database backup failed; inspect the private backup service log.")
         temporary.replace(target)
+        key = subprocess.run(["pct", "exec", "200", "--", "python3", "-c",
+            "from pathlib import Path;import sys;p=Path('/var/lib/myworkspace/icloud-master.key');sys.stdout.buffer.write(p.read_bytes() if p.exists() else b'')"],
+            capture_output=True, check=True).stdout
+        if key:
+            if len(key) != 32:raise RuntimeError("Invalid iCloud encryption key; preserve existing backups.")
+            target.with_suffix(".key").write_bytes(key)
     finally:
         if process.poll() is None:process.kill()
         temporary.unlink(missing_ok=True)
-    for old in sorted(directory.glob("myworkspace-*.sql.gz"))[:-14]:old.unlink()
+    for old in sorted(directory.glob("myworkspace-*.sql.gz"))[:-14]:
+        old.unlink();old.with_suffix(".key").unlink(missing_ok=True)
     print("Backup saved:", target)
     return target
 
@@ -53,7 +60,9 @@ def verify(target):
             finally:
                 if process.poll() is None:process.kill()
         tables = sql(f"SHOW TABLES FROM `{name}`;").splitlines()
-        assert set(tables) == {"app_document", "calendar_event", "flyway_schema_history", "metric_sample", "wol_request"}
+        assert set(tables) == {"app_document", "calendar_event", "flyway_schema_history", "metric_sample", "wol_request", "icloud_range", "icloud_resource"}
+        has_credentials = sql(f"SELECT COUNT(*) FROM `{name}`.app_document WHERE id='icloud' AND JSON_EXTRACT(payload,'$.encryptedCredentials') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.encryptedCredentials')) <> 'null';").strip() != "0"
+        if has_credentials:assert len(target.with_suffix(".key").read_bytes()) == 32
         assert int(sql(f"SELECT COUNT(*) FROM `{name}`.app_document;")) >= 2
         assert sql(f"SELECT COUNT(*) FROM `{name}`.flyway_schema_history WHERE success=0;").strip() == "0"
         for table in tables:
