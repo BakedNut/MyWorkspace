@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useId, useState } from "react";
-import { api } from "@/api";
+import { api, isPreview } from "@/api";
 import { mockControls, type ServerScenario } from "@/api/mock/mockApi";
 import { selectClass } from "@/components/EventDialog";
 import { Button } from "@/components/ui/button";
@@ -160,33 +160,35 @@ function ServerPage() {
         <div>
           <h1 className="text-3xl font-bold">서버 대시보드</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            샘플 데이터 · 1분마다 갱신 · 조회 전용
+            {isPreview ? "샘플 데이터 · " : ""}1분마다 갱신 · 조회 전용
             {data && <> · 마지막 갱신 {formatDateTime(data.updatedAt)}</>}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
-            <label htmlFor={`${uid}-sc`} className="block text-xs text-muted-foreground">
-              시안 상태 보기 (데모)
-            </label>
-            <select
-              id={`${uid}-sc`}
-              className={cn(selectClass, "w-44")}
-              value={scenario}
-              onChange={(e) => {
-                const v = e.target.value as ServerScenario;
-                mockControls.set({ serverScenario: v });
-                qc.removeQueries({ queryKey: ["server"] });
-                setScenario(v);
-              }}
-            >
-              {SCENARIOS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {isPreview && (
+            <div className="space-y-1">
+              <label htmlFor={`${uid}-sc`} className="block text-xs text-muted-foreground">
+                시안 상태 보기 (데모)
+              </label>
+              <select
+                id={`${uid}-sc`}
+                className={cn(selectClass, "w-44")}
+                value={scenario}
+                onChange={(e) => {
+                  const v = e.target.value as ServerScenario;
+                  mockControls.set({ serverScenario: v });
+                  qc.removeQueries({ queryKey: ["server"] });
+                  setScenario(v);
+                }}
+              >
+                {SCENARIOS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => {
