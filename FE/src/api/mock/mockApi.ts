@@ -50,8 +50,13 @@ export const MOCK_PASSWORD = "demo";
 const SESSION_KEY = "session";
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-const calendars = () => load<CalendarInfo[]>("calendars", seedCalendars);
-const events = () => load<CalendarEvent[]>("events", seedEvents);
+const calendars = () =>
+  load<CalendarInfo[]>("calendars", seedCalendars).filter((c) => c.source !== "local");
+// Retiring the local calendar must not discard events saved by earlier previews.
+const events = () =>
+  load<CalendarEvent[]>("events", seedEvents).map((e) =>
+    e.calendarId === "cal-local" ? { ...e, calendarId: "cal-icloud" } : e,
+  );
 const timetable = () => load<Timetable>("timetable", seedTimetable);
 const devices = () => load<WolDevice[]>("wol", seedWolDevices);
 

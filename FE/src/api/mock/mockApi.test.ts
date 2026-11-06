@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockApi, mockControls } from "./mockApi";
-import { load } from "./storage";
+import { load, save } from "./storage";
+import { seedCalendars } from "./seed";
 import type { CalendarEvent } from "@/types/domain";
 import { todayKey } from "@/lib/time";
 
@@ -12,6 +13,55 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("디자인 시안의 데이터 변경", () => {
+  it("로컬 분류를 없애도 기존 일정의 내용과 편집은 유지한다", async () => {
+    save("calendars", [
+      ...seedCalendars(),
+      { id: "cal-local", name: "내 일정", source: "local", color: "personal", readOnly: false },
+    ]);
+    const old: CalendarEvent = {
+      id: "legacy",
+      calendarId: "cal-local",
+      title: "보존할 일정",
+      date: todayKey(),
+      allDay: true,
+      location: "집",
+      memo: "기존 메모",
+    };
+    save("events", [old]);
+    const calendars = mockApi.calendar.listCalendars();
+    const events = mockApi.calendar.listEvents({ from: todayKey(), to: todayKey() });
+    await vi.runAllTimersAsync();
+    expect((await calendars).some((c) => c.source === "local")).toBe(false);
+    expect(await events).toEqual([{ ...old, calendarId: "cal-icloud" }]);
+    const { id, ...input } = (await events)[0]!;
+    const update = mockApi.calendar.updateEvent(id, { ...input, title: "수정한 일정" });
+    await vi.runAllTimersAsync();
+    await update;
+    expect(load("events", () => [])).toEqual([
+      { ...old, calendarId: "cal-icloud", title: "수정한 일정" },
+    ]);
+  });
+
+  it("항상 표시하는 공휴일도 수정·삭제는 허용하지 않는다", async () => {
+    save("events", [
+      { id: "holiday", calendarId: "cal-holiday", title: "공휴일", date: todayKey(), allDay: true },
+    ]);
+    const update = expect(
+      mockApi.calendar.updateEvent("holiday", {
+        calendarId: "cal-icloud",
+        title: "변경",
+        date: todayKey(),
+        allDay: true,
+      }),
+    ).rejects.toMatchObject({ code: "READ_ONLY" });
+    const remove = expect(mockApi.calendar.deleteEvent("holiday")).rejects.toMatchObject({
+      code: "READ_ONLY",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.all([update, remove]);
+    expect(load<CalendarEvent[]>("events", () => [])[0]?.title).toBe("공휴일");
+  });
+
   it("등록하지 않은 PC는 깨울 수 없다", async () => {
     const check = expect(mockApi.wol.wake("my-pc")).rejects.toMatchObject({ code: "VALIDATION" });
     await vi.runAllTimersAsync();

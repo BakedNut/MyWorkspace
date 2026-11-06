@@ -1,22 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Cloud, GraduationCap, Lock, Plus } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
-import { EventDialog, selectClass } from "@/components/EventDialog";
+import { EventDialog } from "@/components/EventDialog";
 import { ICloudDialog } from "@/components/ICloudDialog";
 import { TimetableDialog } from "@/components/TimetableDialog";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { colorClasses, sourceLabel } from "@/lib/calendar-colors";
 import { expandTimetable } from "@/lib/schedule";
 import {
@@ -64,7 +54,6 @@ function CalendarPage() {
   const [eventDlg, setEventDlg] = useState<{ open: boolean; event?: CalendarEvent; date?: string }>(
     { open: false },
   );
-  const [quickDate, setQuickDate] = useState<string | null>(null);
   const [ttOpen, setTtOpen] = useState(false);
   const [icloudOpen, setIcloudOpen] = useState(false);
   const [coarse, setCoarse] = useState(false);
@@ -102,6 +91,13 @@ function CalendarPage() {
   });
 
   const calById = useMemo(() => new Map(calendars.map((c) => [c.id, c])), [calendars]);
+  const holidayDates = useMemo(
+    () =>
+      new Set(
+        events.filter((e) => calById.get(e.calendarId)?.source === "holiday").map((e) => e.date),
+      ),
+    [events, calById],
+  );
   const classesByDate = useMemo(() => {
     const m = new Map<string, ReturnType<typeof expandTimetable>>();
     if (timetable && from && !hidden.has(SCHOOL_ID))
@@ -112,13 +108,13 @@ function CalendarPage() {
   const eventsByDate = useMemo(() => {
     const m = new Map<string, CalendarEvent[]>();
     for (const e of events) {
-      if (hidden.has(e.calendarId)) continue;
+      if (calById.get(e.calendarId)?.source !== "holiday" && hidden.has(e.calendarId)) continue;
       m.set(e.date, [...(m.get(e.date) ?? []), e]);
     }
     for (const list of m.values())
       list.sort((a, b) => (a.allDay ? "" : a.start!).localeCompare(b.allDay ? "" : b.start!));
     return m;
-  }, [events, hidden]);
+  }, [events, hidden, calById]);
 
   if (!view || !today) return <p className="p-10 text-muted-foreground">불러오는 중…</p>;
 
@@ -180,9 +176,6 @@ function CalendarPage() {
             <Cloud aria-hidden /> iCloud {icloud?.state === "connected" ? "연결됨" : ""}{" "}
             <span className="text-xs text-muted-foreground">(시안)</span>
           </Button>
-          <Button onClick={() => setEventDlg({ open: true, date: selected ?? today })}>
-            <Plus aria-hidden /> 일정 추가
-          </Button>
         </div>
       </div>
 
@@ -197,7 +190,7 @@ function CalendarPage() {
             source: "school" as const,
             readOnly: true,
           },
-          ...calendars,
+          ...calendars.filter((c) => c.source === "icloud"),
         ].map((c) => (
           <label key={c.id} className="inline-flex min-h-9 cursor-pointer items-center gap-2">
             <input
@@ -218,12 +211,6 @@ function CalendarPage() {
         ))}
       </fieldset>
 
-      <p className="mt-3 text-sm text-muted-foreground">
-        {coarse
-          ? "날짜 칸을 탭하면 아래에 그날 일정이 표시됩니다."
-          : "날짜를 더블클릭하면 종일 일정을 빠르게 추가합니다. 한 번 클릭하면 아래에 그날 일정이 표시됩니다."}
-      </p>
-
       <div className="mt-4 grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
         {/* Month grid */}
         <div aria-busy={isLoading}>
@@ -243,9 +230,12 @@ function CalendarPage() {
           <ul className="grid grid-cols-7 border-l" aria-label={`${view.y}년 ${view.m}월 달력`}>
             {grid.map(({ key, inMonth }) => {
               const evs = eventsByDate.get(key) ?? [];
+              const holidays = evs.filter((e) => calById.get(e.calendarId)?.source === "holiday");
+              const dayEvents = evs.filter((e) => calById.get(e.calendarId)?.source !== "holiday");
               const cls = classesByDate.get(key) ?? [];
               const wd = weekday(key);
               const isToday = key === today;
+              const isHoliday = holidayDates.has(key);
               const isSel = key === selected;
               const total = evs.length + cls.length;
               return (
@@ -256,12 +246,17 @@ function CalendarPage() {
                     !inMonth && "bg-muted/60",
                     isSel && "bg-accent",
                   )}
-                  onDoubleClick={() => !coarse && setQuickDate(key)}
+                  onDoubleClick={() => {
+                    if (!coarse) {
+                      setSelected(key);
+                      setEventDlg({ open: true, date: key });
+                    }
+                  }}
                 >
                   <button
                     type="button"
                     onClick={() => setSelected(key)}
-                    aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}, 일정 ${total}개`}
+                    aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}${isHoliday ? ", 공휴일" : ""}, 일정 ${total}개`}
                     aria-pressed={isSel}
                     className="absolute inset-0 size-full cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
                   />
@@ -269,48 +264,64 @@ function CalendarPage() {
                     aria-hidden
                     className={cn(
                       "pointer-events-none relative inline-flex size-8 items-center justify-center rounded-md text-sm tabular group-hover:bg-accent",
-                      !inMonth && "text-muted-foreground",
-                      inMonth && wd === 0 && "text-cal-holiday",
-                      inMonth && wd === 6 && "text-primary",
+                      !inMonth && !isHoliday && "text-muted-foreground",
+                      (isHoliday || (inMonth && wd === 0)) && "text-cal-holiday",
+                      inMonth && wd === 6 && !isHoliday && "text-primary",
                       isToday &&
-                        "bg-primary font-semibold text-primary-foreground group-hover:bg-primary",
+                        (isHoliday || wd === 0
+                          ? "bg-cal-holiday-soft font-semibold"
+                          : "bg-primary font-semibold text-primary-foreground group-hover:bg-primary"),
                     )}
                   >
                     {parseKey(key).d}
                   </span>
-                  <div className="pointer-events-none relative mt-0.5 hidden space-y-0.5 sm:block">
-                    {cls.slice(0, 2).map((c) => (
+                  <div className="pointer-events-none relative mt-0.5 space-y-0.5">
+                    {holidays.map((e) => (
                       <p
-                        key={c.courseId}
-                        className={cn("truncate rounded px-1 text-xs", colorClasses.school.chip)}
+                        key={e.id}
+                        title={e.title}
+                        className={cn(
+                          "truncate rounded px-0.5 text-[10px] sm:px-1 sm:text-xs",
+                          colorClasses.holiday.chip,
+                        )}
                       >
-                        {c.start} {c.name}
+                        {e.title}
                       </p>
                     ))}
-                    {evs.slice(0, 3 - Math.min(cls.length, 2)).map((e) => {
-                      const cal = calById.get(e.calendarId);
-                      return (
-                        <button
-                          key={e.id}
-                          type="button"
-                          onClick={() => setEventDlg({ open: true, event: e })}
-                          onDoubleClick={(ev) => ev.stopPropagation()}
-                          className={cn(
-                            "pointer-events-auto block w-full truncate rounded px-1 text-left text-xs",
-                            cal && colorClasses[cal.color].chip,
-                          )}
+                    <div className="hidden space-y-0.5 sm:block">
+                      {cls.slice(0, 2).map((c) => (
+                        <p
+                          key={c.courseId}
+                          className={cn("truncate rounded px-1 text-xs", colorClasses.school.chip)}
                         >
-                          {cal?.readOnly && (
-                            <Lock aria-label="읽기 전용" className="mr-0.5 inline size-2.5" />
-                          )}
-                          {!e.allDay && `${e.start} `}
-                          {e.title}
-                        </button>
-                      );
-                    })}
-                    {total > 3 && (
-                      <p className="px-1 text-xs text-muted-foreground">+{total - 3}개</p>
-                    )}
+                          {c.start} {c.name}
+                        </p>
+                      ))}
+                      {dayEvents.slice(0, 3 - Math.min(cls.length, 2)).map((e) => {
+                        const cal = calById.get(e.calendarId);
+                        return (
+                          <p
+                            key={e.id}
+                            title={e.title}
+                            className={cn(
+                              "truncate rounded px-1 text-xs",
+                              cal && colorClasses[cal.color].chip,
+                            )}
+                          >
+                            {cal?.readOnly && (
+                              <Lock aria-label="읽기 전용" className="mr-0.5 inline size-2.5" />
+                            )}
+                            {!e.allDay && `${e.start} `}
+                            {e.title}
+                          </p>
+                        );
+                      })}
+                      {dayEvents.length + cls.length > 3 && (
+                        <p className="px-1 text-xs text-muted-foreground">
+                          +{dayEvents.length + cls.length - 3}개
+                        </p>
+                      )}
+                    </div>
                   </div>
                   {/* Mobile: dots only */}
                   <div
@@ -341,12 +352,11 @@ function CalendarPage() {
           </h2>
           {selected && (
             <Button
-              variant="outline"
               size="sm"
               className="mt-3"
-              onClick={() => setQuickDate(selected)}
+              onClick={() => setEventDlg({ open: true, date: selected })}
             >
-              <Plus aria-hidden /> 이 날 종일 일정 빠르게 추가
+              <Plus aria-hidden /> 일정 추가
             </Button>
           )}
           <ul className="mt-4 divide-y border-y">
@@ -402,104 +412,8 @@ function CalendarPage() {
         event={eventDlg.event}
         defaults={eventDlg.date ? { date: eventDlg.date } : undefined}
       />
-      <QuickAllDayDialog
-        date={quickDate}
-        onClose={() => setQuickDate(null)}
-        calendars={calendars.filter((c) => !c.readOnly)}
-      />
       <TimetableDialog open={ttOpen} onOpenChange={setTtOpen} timetable={timetable} />
       <ICloudDialog open={icloudOpen} onOpenChange={setIcloudOpen} />
     </div>
-  );
-}
-
-function QuickAllDayDialog({
-  date,
-  onClose,
-  calendars,
-}: {
-  date: string | null;
-  onClose(): void;
-  calendars: { id: string; name: string }[];
-}) {
-  const qc = useQueryClient();
-  const uid = useId();
-  const [title, setTitle] = useState("");
-  const [calendarId, setCalendarId] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (date) {
-      setTitle("");
-      setError(null);
-      setCalendarId((c) => c || calendars[0]?.id || "");
-    }
-  }, [date, calendars]);
-
-  const mut = useMutation({
-    mutationFn: () => api.calendar.createEvent({ title, calendarId, date: date!, allDay: true }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["schedule"] });
-      onClose();
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : "저장하지 못했습니다."),
-  });
-
-  return (
-    <Dialog open={!!date} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>종일 일정 빠르게 추가</DialogTitle>
-          <DialogDescription>{date && formatKoDate(date)}</DialogDescription>
-        </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!title.trim()) return setError("제목을 입력하세요.");
-            setError(null);
-            mut.mutate();
-          }}
-          className="space-y-4"
-        >
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error} 입력한 내용은 유지됩니다.
-            </p>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor={`${uid}-t`}>제목</Label>
-            <Input
-              id={`${uid}-t`}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`${uid}-c`}>캘린더</Label>
-            <select
-              id={`${uid}-c`}
-              className={selectClass}
-              value={calendarId}
-              onChange={(e) => setCalendarId(e.target.value)}
-            >
-              {calendars.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              취소
-            </Button>
-            <Button type="submit" disabled={mut.isPending}>
-              {mut.isPending ? "저장 중…" : "추가"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

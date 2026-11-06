@@ -11,7 +11,6 @@ import { addDays, todayKey, weekday } from "@/lib/time";
 
 export const seedCalendars = (): CalendarInfo[] => [
   { id: "cal-icloud", name: "iCloud 개인", source: "icloud", color: "icloud", readOnly: false },
-  { id: "cal-local", name: "내 일정", source: "local", color: "personal", readOnly: false },
   { id: "cal-holiday", name: "공휴일 (예시)", source: "holiday", color: "holiday", readOnly: true },
 ];
 
@@ -37,7 +36,7 @@ export const seedEvents = (): CalendarEvent[] => {
       start: "18:30",
       end: "19:30",
     },
-    { id: "e3", calendarId: "cal-local", title: "가족 저녁", date: addDays(t, 2), allDay: true },
+    { id: "e3", calendarId: "cal-icloud", title: "가족 저녁", date: addDays(t, 2), allDay: true },
     {
       id: "e4",
       calendarId: "cal-icloud",
