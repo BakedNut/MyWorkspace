@@ -51,6 +51,7 @@ export interface Course {
   id: string;
   name: string;
   room: string;
+  professor?: string;
   weekday: number; // 0 = 일요일 ... 6 = 토요일
   start: TimeHM;
   end: TimeHM;

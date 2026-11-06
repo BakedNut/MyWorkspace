@@ -10,6 +10,7 @@ import type {
   WolDeviceId,
 } from "@/types/domain";
 import { expandTimetable, isValidTimeRange } from "@/lib/schedule";
+import { validateTimetable } from "@/lib/timetable";
 import { cooldownRemaining, normalizeMac } from "@/lib/wol";
 import { delay, load, remove, save } from "./storage";
 import {
@@ -176,13 +177,8 @@ export const mockApi: ApiClient = {
     },
     async save(t) {
       await delay(300);
-      if (t.semesterEnd < t.semesterStart)
-        throw new ApiError("학기 종료일이 시작일보다 빠릅니다.", "VALIDATION");
-      for (const c of t.courses) {
-        if (!c.name.trim()) throw new ApiError("과목명을 입력하세요.", "VALIDATION");
-        if (!isValidTimeRange(c.start, c.end))
-          throw new ApiError(`${c.name}: 종료 시간이 시작보다 늦어야 합니다.`, "VALIDATION");
-      }
+      const issue = validateTimetable(t);
+      if (issue) throw new ApiError(issue.message, "VALIDATION");
       if (controls().simulateSaveFailure)
         throw new ApiError("시간표를 저장하지 못했습니다. (실패 시뮬레이션)", "NETWORK");
       save("timetable", t);
