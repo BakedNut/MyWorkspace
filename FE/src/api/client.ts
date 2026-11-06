@@ -6,6 +6,8 @@ import type {
   EventInput,
   ICloudStatus,
   ServerStatus,
+  ServerHistory,
+  ServerRange,
   Session,
   Timetable,
   TodayItem,
@@ -50,6 +52,7 @@ export interface ApiClient {
   };
   server: {
     getStatus(): Promise<ServerStatus>;
+    getHistory(range: ServerRange): Promise<ServerHistory>;
   };
   wol: {
     list(): Promise<WolDevice[]>;

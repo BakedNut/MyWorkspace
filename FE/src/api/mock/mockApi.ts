@@ -13,6 +13,7 @@ import { expandTimetable, isValidTimeRange } from "@/lib/schedule";
 import { validateTimetable } from "@/lib/timetable";
 import { cooldownRemaining, normalizeMac } from "@/lib/wol";
 import { delay, load, remove, save } from "./storage";
+import { sampleServerHistory } from "./server-history";
 import {
   sampleServerStatus,
   seedCalendars,
@@ -192,6 +193,13 @@ export const mockApi: ApiClient = {
   },
 
   server: {
+    async getHistory(range) {
+      const scenario = controls().serverScenario;
+      if (scenario === "loading") return new Promise(() => {});
+      await delay(200);
+      if (scenario === "error") throw new ApiError("사용률 기록을 불러오지 못했습니다.", "NETWORK");
+      return sampleServerHistory(range, Date.now() - (scenario === "stale" ? 12 * 60_000 : 0));
+    },
     async getStatus() {
       const scenario = controls().serverScenario;
       if (scenario === "loading") return new Promise(() => {}); // never resolves

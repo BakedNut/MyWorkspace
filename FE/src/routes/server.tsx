@@ -6,11 +6,13 @@ import { api } from "@/api";
 import { mockControls, type ServerScenario } from "@/api/mock/mockApi";
 import { selectClass } from "@/components/EventDialog";
 import { Button } from "@/components/ui/button";
+import { UsageChart } from "@/components/UsageChart";
+import { HISTORY_WINDOWS } from "@/lib/server-history";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/time";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
-import type { GuestStatus } from "@/types/domain";
+import type { GuestStatus, ServerRange } from "@/types/domain";
 
 export const Route = createFileRoute("/server")({
   head: () => ({
@@ -79,15 +81,45 @@ function ServerPage() {
   const uid = useId();
   const qc = useQueryClient();
   const now = useNow(15_000);
+  const [range, setRange] = useState<ServerRange>("1D");
   const [scenario, setScenario] = useState<ServerScenario>(() =>
     typeof window === "undefined" ? "normal" : mockControls.get().serverScenario,
   );
   const { data, error, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["server", scenario],
     queryFn: () => api.server.getStatus(),
-    refetchInterval: 10_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   });
+  const history = useQuery({
+    queryKey: ["server-history", scenario, range],
+    queryFn: () => api.server.getHistory(range),
+    enabled: !!data,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const daily = useQuery({
+    queryKey: ["server-history", scenario, "1D"],
+    queryFn: () => api.server.getHistory("1D"),
+    enabled: !!data,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const hostHistory = history.data;
+  const guestHistory = daily.data;
+  const hostEmpty = history.isPending
+    ? "기록을 불러오는 중…"
+    : history.error
+      ? "기록을 불러오지 못했습니다."
+      : "기록 없음";
+  const guestEmpty = daily.isPending
+    ? "기록을 불러오는 중…"
+    : daily.error
+      ? "기록을 불러오지 못했습니다."
+      : "기록 없음";
   const stale = data && now ? now.getTime() - new Date(data.updatedAt).getTime() > STALE_MS : false;
 
   return (
@@ -96,7 +128,7 @@ function ServerPage() {
         <div>
           <h1 className="text-3xl font-bold">서버 대시보드</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            샘플 데이터 · 조회 전용 (서버 제어 기능 없음)
+            샘플 데이터 · 1분마다 갱신 · 조회 전용
             {data && <> · 마지막 갱신 {formatDateTime(data.updatedAt)}</>}
           </p>
         </div>
@@ -123,7 +155,14 @@ function ServerPage() {
               ))}
             </select>
           </div>
-          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              refetch();
+              qc.invalidateQueries({ queryKey: ["server-history"] });
+            }}
+            disabled={isFetching}
+          >
             <RefreshCw aria-hidden className={cn(isFetching && "animate-spin")} />{" "}
             {isFetching ? "갱신 중…" : "데이터 새로고침"}
           </Button>
@@ -168,9 +207,33 @@ function ServerPage() {
       {data && (
         <div className={cn("mt-8 space-y-10", stale && "opacity-80")}>
           <section aria-labelledby="host-title">
-            <h2 id="host-title" className="text-lg font-bold">
-              {data.hostName}
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 id="host-title" className="text-lg font-bold">
+                {data.hostName}
+              </h2>
+              <div
+                role="group"
+                aria-label="호스트 그래프 기간"
+                className="flex gap-1 rounded-lg border p-1"
+              >
+                {(Object.keys(HISTORY_WINDOWS) as ServerRange[]).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={range === r}
+                    onClick={() => setRange(r)}
+                    className={cn(
+                      "min-h-9 rounded-md px-3 text-xs",
+                      range === r
+                        ? "bg-accent font-semibold text-primary"
+                        : "text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
             <dl className="mt-4 grid gap-6 border-y py-6 sm:grid-cols-2">
               <div className="space-y-2">
                 <dt className="flex justify-between text-sm">
@@ -179,7 +242,14 @@ function ServerPage() {
                 </dt>
                 <dd className="space-y-2">
                   <p className="text-3xl font-bold tabular">{data.cpu.usagePercent}%</p>
-                  <Meter value={data.cpu.usagePercent} label="CPU 사용률" />
+                  <UsageChart
+                    label="호스트 CPU"
+                    range={range}
+                    points={hostHistory?.host.cpu}
+                    from={hostHistory?.from ?? 0}
+                    to={hostHistory?.to ?? 1}
+                    empty={hostEmpty}
+                  />
                   <p className="text-sm">
                     온도 <Temp c={data.cpu.tempC} />
                   </p>
@@ -196,7 +266,14 @@ function ServerPage() {
                   <p className="text-3xl font-bold tabular">
                     {pct(data.ram.usedMb, data.ram.totalMb)}%
                   </p>
-                  <Meter value={pct(data.ram.usedMb, data.ram.totalMb)} label="RAM 사용률" />
+                  <UsageChart
+                    label="호스트 RAM"
+                    range={range}
+                    points={hostHistory?.host.ram}
+                    from={hostHistory?.from ?? 0}
+                    to={hostHistory?.to ?? 1}
+                    empty={hostEmpty}
+                  />
                 </dd>
               </div>
             </dl>
@@ -232,56 +309,72 @@ function ServerPage() {
             <h2 id="guest-title" className="text-lg font-bold">
               VM · LXC
             </h2>
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[36rem] text-left text-sm">
-                <thead className="border-y text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="py-2 pr-4 font-medium">
-                      ID
-                    </th>
-                    <th scope="col" className="py-2 pr-4 font-medium">
-                      이름
-                    </th>
-                    <th scope="col" className="py-2 pr-4 font-medium">
-                      유형
-                    </th>
-                    <th scope="col" className="py-2 pr-4 font-medium">
-                      상태
-                    </th>
-                    <th scope="col" className="py-2 pr-4 font-medium">
-                      CPU
-                    </th>
-                    <th scope="col" className="py-2 font-medium">
-                      메모리
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y border-b">
-                  {data.guests.map((g) => (
-                    <tr key={g.id}>
-                      <td className="py-3 pr-4 tabular text-muted-foreground">{g.id}</td>
-                      <td className="py-3 pr-4 font-medium">{g.name}</td>
-                      <td className="py-3 pr-4 uppercase">{g.type}</td>
-                      <td className="py-3 pr-4">
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            aria-hidden
-                            className={cn("size-2 rounded-full", statusLabel[g.status].cls)}
-                          />
-                          {statusLabel[g.status].text}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 tabular">
-                        {g.status === "running" ? `${g.cpuPercent}%` : "—"}
-                      </td>
-                      <td className="py-3 tabular">
-                        {g.status === "stopped" ? "—" : `${gb(g.memUsedMb)} / ${gb(g.memTotalMb)}`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {data.guests.map((g) => {
+                const record = guestHistory?.guests[`${g.type}-${g.id}`];
+                return (
+                  <li key={g.id} className="min-w-0 rounded-xl border bg-card p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs uppercase text-muted-foreground">
+                          {g.type} · {g.id}
+                        </p>
+                        <h3 className="mt-1 truncate font-semibold" title={g.name}>
+                          {g.name}
+                        </h3>
+                      </div>
+                      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs">
+                        <span
+                          aria-hidden
+                          className={cn("size-2 rounded-full", statusLabel[g.status].cls)}
+                        />
+                        {statusLabel[g.status].text}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">최근 1일 · 1D</p>
+                    <div className="mt-3 space-y-4">
+                      <div>
+                        <p className="mb-1 flex justify-between text-sm">
+                          <span className="font-medium">CPU</span>
+                          <span className="tabular-nums">
+                            {g.status === "running" ? `${g.cpuPercent}%` : "—"}
+                          </span>
+                        </p>
+                        <UsageChart
+                          label={`${g.name} CPU`}
+                          range="1D"
+                          points={record?.cpu}
+                          from={guestHistory?.from ?? 0}
+                          to={guestHistory?.to ?? 1}
+                          empty={guestEmpty}
+                        />
+                      </div>
+                      <div>
+                        <p className="mb-1 flex justify-between text-sm">
+                          <span className="font-medium">RAM</span>
+                          <span className="tabular-nums">
+                            {g.status === "stopped" ? "—" : `${pct(g.memUsedMb, g.memTotalMb)}%`}
+                          </span>
+                        </p>
+                        <UsageChart
+                          label={`${g.name} RAM`}
+                          range="1D"
+                          points={record?.ram}
+                          from={guestHistory?.from ?? 0}
+                          to={guestHistory?.to ?? 1}
+                          empty={guestEmpty}
+                        />
+                        <p className="mt-2 text-right text-xs tabular-nums text-muted-foreground">
+                          {g.status === "stopped"
+                            ? "중지된 게스트"
+                            : `${gb(g.memUsedMb)} / ${gb(g.memTotalMb)}`}
+                        </p>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
         </div>
       )}
