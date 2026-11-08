@@ -106,9 +106,20 @@ class ApiIntegrationTest {
         .andExpect(status().isUnauthorized());
     mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "localhost"))
         .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/auth/session").header(Security.CLIENT_HEADER, "198.51.100.10"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.authenticated").value(true));
+    mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "198.51.100.10"))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "198.51.100.11"))
+        .andExpect(status().isUnauthorized());
     mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "100.65.70.77"))
         .andExpect(status().isOk());
     mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "100.65.70.78"))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "fd7a:115c:a1e0::1234"))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/timetable").header(Security.CLIENT_HEADER, "fd7a:115c:a1e0::1235"))
         .andExpect(status().isUnauthorized());
     mvc.perform(
             get("/api/timetable")
