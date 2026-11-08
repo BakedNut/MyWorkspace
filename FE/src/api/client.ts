@@ -1,5 +1,4 @@
 import type {
-  BootState,
   CalendarEvent,
   CalendarInfo,
   DateKey,
@@ -74,7 +73,6 @@ export interface ApiClient {
     saveDevices(devices: WolDevice[]): Promise<WolDevice[]>;
     updateMac(id: WolDeviceId, mac: string | null): Promise<WolDevice>;
     wake(id: WolDeviceId): Promise<WakeResult>;
-    getBootState(id: WolDeviceId): Promise<BootState>;
   };
 }
 

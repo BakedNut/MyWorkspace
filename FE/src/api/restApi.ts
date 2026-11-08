@@ -1,6 +1,5 @@
 import type { ApiClient } from "./client";
 import { ApiError } from "./client";
-import type { BootState } from "@/types/domain";
 
 let csrf: { token: string; headerName: string } | null = null;
 async function token() {
@@ -115,7 +114,5 @@ export const restApi: ApiClient = {
     saveDevices: (devices) => request("/wol/devices", "PUT", devices),
     updateMac: (id, mac) => request(`/wol/devices/${encodeURIComponent(id)}/mac`, "PATCH", { mac }),
     wake: (id) => request(`/wol/devices/${encodeURIComponent(id)}/wake`, "POST"),
-    getBootState: async (id) =>
-      (await request<{ state: BootState }>(`/wol/devices/${encodeURIComponent(id)}/boot`)).state,
   },
 };

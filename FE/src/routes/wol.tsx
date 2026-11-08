@@ -1,15 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  CheckCircle2,
-  CircleHelp,
-  Loader2,
-  Power,
-  Send,
-  Plus,
-  Trash2,
-  Settings2,
-} from "lucide-react";
+import { Loader2, Power, Send, Plus, Trash2, Settings2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, isPreview } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -91,9 +82,7 @@ function WolPage() {
 type Phase =
   | { kind: "idle" }
   | { kind: "sending" }
-  | { kind: "checking"; sentAt: string }
-  | { kind: "online"; sentAt: string }
-  | { kind: "unconfirmed"; sentAt: string }
+  | { kind: "sent"; sentAt: string }
   | { kind: "error"; message: string };
 
 function DeviceRow({ device }: { device: WolDevice }) {
@@ -110,7 +99,7 @@ function DeviceRow({ device }: { device: WolDevice }) {
   }, [device.mac]);
 
   const remaining = now ? cooldownRemaining(lastWake, now.getTime()) : 0;
-  const busy = phase.kind === "sending" || phase.kind === "checking";
+  const busy = phase.kind === "sending";
   const disabled = !device.mac || busy || remaining > 0;
 
   const wake = async () => {
@@ -121,16 +110,7 @@ function DeviceRow({ device }: { device: WolDevice }) {
       const { sentAt } = await api.wol.wake(device.id);
       if (!active()) return;
       setLastWake(Date.now());
-      setPhase({ kind: "checking", sentAt });
-      // Poll boot state a few times — packet sent ≠ booted.
-      for (let i = 0; i < 4; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        if (!active()) return;
-        const state = await api.wol.getBootState(device.id);
-        if (!active()) return;
-        if (state === "online") return setPhase({ kind: "online", sentAt });
-      }
-      setPhase({ kind: "unconfirmed", sentAt });
+      setPhase({ kind: "sent", sentAt });
     } catch (e) {
       if (!active()) return;
       if (e instanceof ApiError && e.code === "RATE_LIMITED")
@@ -166,21 +146,10 @@ function DeviceRow({ device }: { device: WolDevice }) {
             <Loader2 aria-hidden className="size-4 animate-spin" /> 요청 중…
           </span>
         )}
-        {phase.kind === "checking" && (
+        {phase.kind === "sent" && (
           <span className="inline-flex items-center gap-1.5">
             <Send aria-hidden className="size-4 text-success" /> 매직 패킷 전송 완료 (
-            {formatDateTime(phase.sentAt)}) · 부팅 확인 중…
-          </span>
-        )}
-        {phase.kind === "online" && (
-          <span className="inline-flex items-center gap-1.5 text-success">
-            <CheckCircle2 aria-hidden className="size-4" /> 패킷 전송 완료 · 부팅 확인됨 (응답 있음)
-          </span>
-        )}
-        {phase.kind === "unconfirmed" && (
-          <span className="inline-flex items-center gap-1.5 text-warning">
-            <CircleHelp aria-hidden className="size-4" /> 패킷 전송 완료 · 부팅은 확인되지 않음
-            (응답 없음)
+            {formatDateTime(phase.sentAt)})
           </span>
         )}
         {phase.kind === "error" && (

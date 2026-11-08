@@ -74,7 +74,7 @@ function validateEvent(input: EventInput) {
     throw new ApiError("서버에 저장하지 못했습니다. (실패 시뮬레이션)", "NETWORK");
 }
 
-// In-memory rate limit + boot simulation (a real server would enforce the limit too).
+// In-memory rate limit (the real server enforces its own limit).
 const lastWake = new Map<WolDeviceId, number>();
 
 export const mockApi: ApiClient = {
@@ -287,13 +287,6 @@ export const mockApi: ApiClient = {
       if (remaining > 0) throw new ApiError("잠시 후 다시 시도하세요.", "RATE_LIMITED", remaining);
       lastWake.set(id, Date.now());
       return { sentAt: new Date().toISOString() };
-    },
-    async getBootState(id) {
-      await delay(200);
-      const sent = lastWake.get(id);
-      // Demo: "내 PC" answers ~4s after wake; "형 PC" never answers, to show the unconfirmed state.
-      if (id === "my-pc" && sent && Date.now() - sent > 4000) return "online";
-      return "unknown";
     },
   },
 };

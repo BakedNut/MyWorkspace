@@ -187,5 +187,3 @@ export interface WolDevice {
 export interface WakeResult {
   sentAt: string; // ISO — magic packet sent (does NOT mean booted)
 }
-
-export type BootState = "online" | "offline" | "unknown";

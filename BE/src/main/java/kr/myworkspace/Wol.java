@@ -152,12 +152,4 @@ class WolController {
   Object wake(@PathVariable String id) {
     return service.wake(id);
   }
-
-  @GetMapping("/{id}/boot")
-  Object boot(@PathVariable String id) {
-    if (service.list().stream().noneMatch(d -> d.id().equals(id)))
-      throw new ApiException(404, "NOT_FOUND", "PC를 찾을 수 없습니다.");
-    // A MAC address alone cannot establish whether a PC finished booting.
-    return Map.of("state", "unknown");
-  }
 }

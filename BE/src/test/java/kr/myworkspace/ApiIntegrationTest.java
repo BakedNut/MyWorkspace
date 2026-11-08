@@ -218,8 +218,7 @@ class ApiIntegrationTest {
         .andExpect(status().isOk());
     verify(packets).send("02:12:34:56:78:9A");
     mvc.perform(get("/api/wol/devices/test-pc/boot").header(Security.CLIENT_HEADER, LAN))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.state").value("unknown"));
+        .andExpect(status().isNotFound());
     mvc.perform(
             post("/api/wol/devices/test-pc/wake").header(Security.CLIENT_HEADER, LAN).with(csrf()))
         .andExpect(status().isTooManyRequests());
