@@ -6,7 +6,6 @@ import { api } from "@/api";
 import { EventDialog } from "@/components/EventDialog";
 import { MiniCalendar } from "@/components/MiniCalendar";
 import { colorClasses } from "@/lib/calendar-colors";
-import { expandTimetable } from "@/lib/schedule";
 import { clock12, formatKoDate, monthGrid, parseKey, seoulParts, toMinutes } from "@/lib/time";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -95,10 +94,6 @@ function Index() {
     queryKey: ["schedule", "calendars"],
     queryFn: () => api.calendar.listCalendars(),
   });
-  const { data: timetable } = useQuery({
-    queryKey: ["schedule", "timetable"],
-    queryFn: () => api.timetable.get(),
-  });
   const { data: monthEvents = [] } = useQuery({
     queryKey: ["schedule", "events", from, to],
     queryFn: () => api.calendar.listEvents({ from: from!, to: to! }),
@@ -113,11 +108,11 @@ function Index() {
     (r) =>
       toMinutes(r.start!) <= nowMin && nowMin < toMinutes(r.end ?? r.start!) + (r.end ? 0 : 60),
   );
-  const marked = useMemo(() => {
-    const s = new Set(monthEvents.map((e) => e.date));
-    if (timetable && from && to) expandTimetable(timetable, from, to).forEach((c) => s.add(c.date));
-    return s;
-  }, [monthEvents, timetable, from, to]);
+  const marked = useMemo(() => new Set(monthEvents.map((e) => e.date)), [monthEvents]);
+  const holidayDates = useMemo(() => {
+    const holidayIds = new Set(calendars.filter((c) => c.source === "holiday").map((c) => c.id));
+    return new Set(monthEvents.filter((e) => holidayIds.has(e.calendarId)).map((e) => e.date));
+  }, [monthEvents, calendars]);
 
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-5 py-8 md:px-10 md:py-14 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-0">
@@ -243,6 +238,7 @@ function Index() {
           <MiniCalendar
             today={today}
             markedDates={marked}
+            holidayDates={holidayDates}
             selected={selected}
             onSelect={setSelection}
             view={view}

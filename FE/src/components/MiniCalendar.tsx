@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 export function MiniCalendar({
   today,
   markedDates,
+  holidayDates,
   selected,
   onSelect,
   view,
@@ -12,6 +13,7 @@ export function MiniCalendar({
 }: {
   today: string;
   markedDates: Set<string>;
+  holidayDates: Set<string>;
   selected: string;
   onSelect(date: string): void;
   view: { y: number; m: number };
@@ -60,20 +62,25 @@ export function MiniCalendar({
           if (!inMonth) return <span key={key} aria-hidden />;
           const wd = weekday(key);
           const isToday = key === today;
+          const isHoliday = holidayDates.has(key);
+          const isRedDay = wd === 0 || isHoliday;
           return (
             <button
               key={key}
               type="button"
               onClick={() => onSelect(key)}
               aria-pressed={key === selected}
-              aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}${markedDates.has(key) ? ", 일정 있음" : ""} — 일정 보기`}
+              aria-label={`${formatKoDate(key)}${isToday ? ", 오늘" : ""}${isHoliday ? ", 공휴일" : ""}${markedDates.has(key) ? ", 일정 있음" : ""} — 일정 보기`}
               aria-current={isToday ? "date" : undefined}
               className={cn(
                 "relative mx-auto flex size-10 flex-col items-center justify-center rounded-lg tabular hover:bg-accent",
-                wd === 0 && "text-cal-holiday",
-                wd === 6 && "text-primary",
+                isRedDay && "text-cal-holiday",
+                wd === 6 && !isRedDay && "text-primary",
                 key === selected && !isToday && "bg-accent ring-1 ring-primary/40",
-                isToday && "bg-primary font-semibold text-primary-foreground hover:bg-primary",
+                isToday &&
+                  (isRedDay
+                    ? "bg-cal-holiday-soft font-semibold hover:bg-cal-holiday-soft"
+                    : "bg-primary font-semibold text-primary-foreground hover:bg-primary"),
               )}
             >
               {parseKey(key).d}
@@ -82,7 +89,7 @@ export function MiniCalendar({
                   aria-hidden
                   className={cn(
                     "absolute bottom-1 size-1 rounded-full",
-                    isToday ? "bg-primary-foreground" : "bg-primary",
+                    isToday && !isRedDay ? "bg-primary-foreground" : "bg-primary",
                   )}
                 />
               )}
