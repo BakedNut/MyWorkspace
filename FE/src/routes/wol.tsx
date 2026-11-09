@@ -20,11 +20,11 @@ import { cooldownRemaining, normalizeWolList } from "@/lib/wol";
 import type { WolDevice } from "@/types/domain";
 
 export const Route = createFileRoute("/wol")({
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
-      { title: "WOL · MyWorkspace" },
+      { title: `WOL · ${match.context.siteName}` },
       { name: "description", content: "등록한 PC를 Wake-on-LAN으로 깨웁니다." },
-      { property: "og:title", content: "WOL · MyWorkspace" },
+      { property: "og:title", content: `WOL · ${match.context.siteName}` },
       { property: "og:description", content: "등록한 PC를 Wake-on-LAN으로 깨웁니다." },
     ],
   }),

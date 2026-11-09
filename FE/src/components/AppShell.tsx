@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { isPreview } from "@/api";
+import { useSiteName } from "@/lib/site";
 
 const NAV = [
   { to: "/", label: "메인", icon: Home },
@@ -12,11 +13,12 @@ const NAV = [
   { to: "/server", label: "서버 대시보드", icon: Server },
   { to: "/wol", label: "WOL", icon: Power },
 ] as const;
-const SecurityDialog = lazy(() =>
-  import("./SecurityDialog").then((module) => ({ default: module.SecurityDialog })),
+const SettingsDialog = lazy(() =>
+  import("./SettingsDialog").then((module) => ({ default: module.SettingsDialog })),
 );
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const siteName = useSiteName();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { status, logout } = useAuth();
   const navigate = useNavigate();
@@ -66,10 +68,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             setSettingsOpen(true);
           }}
           className="flex min-h-11 items-center gap-2 rounded-md px-1 text-muted-foreground hover:text-foreground"
-          aria-label="암호 설정"
+          aria-label="설정"
         >
           <Settings aria-hidden className="size-4" />
-          암호 설정
+          설정
         </button>
         {isPreview && (
           <p className="rounded-md border border-sidebar-border px-3 py-2 text-xs text-muted-foreground">
@@ -107,13 +109,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Menu aria-hidden className="size-5" />
             </button>
           </Dialog.Trigger>
-          <span className="text-lg font-bold tracking-tight">MyWorkspace</span>
+          <span className="min-w-0 truncate text-lg font-bold tracking-tight" title={siteName}>
+            {siteName}
+          </span>
         </header>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 md:hidden" />
           <Dialog.Content className="fixed inset-y-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-xl outline-none md:hidden">
             <div className="flex items-center justify-between px-5 py-4">
-              <Dialog.Title className="text-xl font-bold">MyWorkspace</Dialog.Title>
+              <Dialog.Title className="min-w-0 truncate text-xl font-bold" title={siteName}>
+                {siteName}
+              </Dialog.Title>
               <Dialog.Close asChild>
                 <button
                   type="button"
@@ -130,7 +136,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Dialog.Portal>
       </Dialog.Root>
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
-        <div className="px-7 pb-8 pt-8 text-2xl font-bold">MyWorkspace</div>
+        <div className="px-7 pb-8 pt-8 text-2xl font-bold">
+          <span className="line-clamp-2 break-words" title={siteName}>
+            {siteName}
+          </span>
+        </div>
         {navigation}
       </aside>
 
@@ -145,7 +155,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
       {settingsOpen && (
         <Suspense fallback={null}>
-          <SecurityDialog open onOpenChange={setSettingsOpen} />
+          <SettingsDialog open onOpenChange={setSettingsOpen} />
         </Suspense>
       )}
     </div>

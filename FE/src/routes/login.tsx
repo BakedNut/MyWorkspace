@@ -6,14 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
+import { useSiteName } from "@/lib/site";
 
 export const Route = createFileRoute("/login")({
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
-      { title: "로그인 · MyWorkspace" },
-      { name: "description", content: "MyWorkspace 개인 공간에 로그인합니다." },
-      { property: "og:title", content: "로그인 · MyWorkspace" },
-      { property: "og:description", content: "MyWorkspace 개인 공간에 로그인합니다." },
+      { title: `로그인 · ${match.context.siteName}` },
+      { name: "description", content: `${match.context.siteName} 개인 공간에 로그인합니다.` },
+      { property: "og:title", content: `로그인 · ${match.context.siteName}` },
+      {
+        property: "og:description",
+        content: `${match.context.siteName} 개인 공간에 로그인합니다.`,
+      },
     ],
   }),
   component: LoginPage,
@@ -25,6 +29,7 @@ export const Route = createFileRoute("/login")({
  * an HttpOnly session cookie. The frontend never inspects or trusts client IPs.
  */
 function LoginPage() {
+  const siteName = useSiteName();
   const { status, login } = useAuth();
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
@@ -52,7 +57,7 @@ function LoginPage() {
           }
         }}
       >
-        <h1 className="text-2xl font-bold tracking-tight">MyWorkspace</h1>
+        <h1 className="break-words text-2xl font-bold tracking-tight">{siteName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">비밀번호를 입력해 로그인하세요.</p>
         <div className="mt-6 space-y-1.5">
           <Label htmlFor="pw">비밀번호</Label>

@@ -12,11 +12,11 @@ import { cn } from "@/lib/utils";
 import type { CalendarEvent, TodayItem } from "@/types/domain";
 
 export const Route = createFileRoute("/")({
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
-      { title: "메인 · MyWorkspace" },
+      { title: `메인 · ${match.context.siteName}` },
       { name: "description", content: "현재 시각과 오늘 일정, 선택한 날짜의 일정을 확인합니다." },
-      { property: "og:title", content: "메인 · MyWorkspace" },
+      { property: "og:title", content: `메인 · ${match.context.siteName}` },
       {
         property: "og:description",
         content: "현재 시각과 오늘 일정, 선택한 날짜의 일정을 확인합니다.",

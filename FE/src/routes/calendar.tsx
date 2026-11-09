@@ -33,11 +33,11 @@ export const Route = createFileRoute("/calendar")({
       return {};
     }
   },
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
-      { title: "캘린더 · MyWorkspace" },
+      { title: `캘린더 · ${match.context.siteName}` },
       { name: "description", content: "월간 일정과 학교 시간표를 함께 보고 편집합니다." },
-      { property: "og:title", content: "캘린더 · MyWorkspace" },
+      { property: "og:title", content: `캘린더 · ${match.context.siteName}` },
       { property: "og:description", content: "월간 일정과 학교 시간표를 함께 보고 편집합니다." },
     ],
   }),

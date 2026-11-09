@@ -15,11 +15,11 @@ import { cn } from "@/lib/utils";
 import type { GuestStatus, ServerRange } from "@/types/domain";
 
 export const Route = createFileRoute("/server")({
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
-      { title: "서버 대시보드 · MyWorkspace" },
+      { title: `서버 대시보드 · ${match.context.siteName}` },
       { name: "description", content: "홈서버 CPU, 메모리, 스토리지와 VM·LXC 상태를 확인합니다." },
-      { property: "og:title", content: "서버 대시보드 · MyWorkspace" },
+      { property: "og:title", content: `서버 대시보드 · ${match.context.siteName}` },
       {
         property: "og:description",
         content: "홈서버 CPU, 메모리, 스토리지와 VM·LXC 상태를 확인합니다.",

@@ -12,9 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SiteNameForm } from "./SiteNameForm";
 import type { OtpSetup, SecurityProof } from "@/types/domain";
 
-export function SecurityDialog({
+export function SettingsDialog({
   open,
   onOpenChange,
 }: {
@@ -28,7 +29,7 @@ export function SecurityDialog({
     isPending,
     refetch,
   } = useQuery({ queryKey: ["security"], queryFn: () => api.security.getStatus(), enabled: open });
-  const [tab, setTab] = useState<"password" | "otp">("password");
+  const [tab, setTab] = useState<"general" | "password" | "otp">("general");
   const [method, setMethod] = useState<"password" | "otp">("password");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -142,12 +143,43 @@ export function SecurityDialog({
     >
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>암호 설정</DialogTitle>
-          <DialogDescription>
-            기존 비밀번호 또는 등록한 Google OTP로 본인 확인 후 비밀번호를 변경할 수 있습니다.
-          </DialogDescription>
+          <DialogTitle>설정</DialogTitle>
+          <DialogDescription>사이트 이름과 비밀번호·Google OTP를 관리합니다.</DialogDescription>
         </DialogHeader>
-        {data?.requiresHttps ? (
+        <div role="group" aria-label="설정 메뉴" className="flex flex-wrap gap-2 border-b pb-3">
+          {(
+            [
+              ["general", "일반"],
+              ["password", "비밀번호 변경"],
+              ["otp", "Google OTP"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              type="button"
+              variant={tab === value ? "default" : "outline"}
+              aria-pressed={tab === value}
+              disabled={busy}
+              onClick={() => {
+                setTab(value);
+                setPassword("");
+                setOtp("");
+                setReplacement("");
+                setConfirm("");
+                setError("");
+                setNotice("");
+                setRemoving(false);
+                clearSetup();
+              }}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+
+        {tab === "general" ? (
+          <SiteNameForm />
+        ) : data?.requiresHttps ? (
           <div className="space-y-3 rounded-lg bg-secondary p-4 text-sm">
             <p>비밀번호와 OTP 설정은 HTTPS 주소에서 진행하세요.</p>
             {data.secureSetupUrl && (
@@ -168,35 +200,6 @@ export function SecurityDialog({
           <p role="status">설정을 불러오는 중…</p>
         ) : (
           <>
-            <div role="group" aria-label="암호 설정 메뉴" className="flex gap-2 border-b pb-3">
-              {(
-                [
-                  ["password", "비밀번호 변경"],
-                  ["otp", "Google OTP"],
-                ] as const
-              ).map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  variant={tab === value ? "default" : "outline"}
-                  aria-pressed={tab === value}
-                  disabled={busy}
-                  onClick={() => {
-                    setTab(value);
-                    setPassword("");
-                    setOtp("");
-                    setReplacement("");
-                    setConfirm("");
-                    setError("");
-                    setNotice("");
-                    setRemoving(false);
-                    clearSetup();
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
             {error && (
               <p role="alert" className="text-sm text-destructive">
                 {error}

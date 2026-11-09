@@ -1,10 +1,26 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HeadContent, Link, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import {
+  HeadContent,
+  Link,
+  Outlet,
+  createRootRouteWithContext,
+  useRouter,
+} from "@tanstack/react-router";
+import { useEffect } from "react";
 import { AuthProvider } from "@/lib/auth";
 import { AppShell } from "@/components/AppShell";
+import { siteQuery } from "@/lib/site";
+import { DEFAULT_SITE_NAME } from "@/types/domain";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  head: () => ({ meta: [{ title: "MyWorkspace" }] }),
+  beforeLoad: async ({ context }) => {
+    try {
+      return { siteName: (await context.queryClient.ensureQueryData(siteQuery)).siteName };
+    } catch {
+      return { siteName: DEFAULT_SITE_NAME };
+    }
+  },
+  head: ({ match }) => ({ meta: [{ title: match.context.siteName }] }),
   component: RootComponent,
   notFoundComponent: () => (
     <div className="p-8">
@@ -28,6 +44,7 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   return (
     <QueryClientProvider client={queryClient}>
+      <SiteContextSync />
       <HeadContent />
       <AuthProvider>
         <AppShell>
@@ -36,4 +53,14 @@ function RootComponent() {
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+function SiteContextSync() {
+  const { siteName } = Route.useRouteContext();
+  const { data } = useQuery(siteQuery);
+  const router = useRouter();
+  useEffect(() => {
+    if (data && data.siteName !== siteName) void router.invalidate();
+  }, [data, siteName, router]);
+  return null;
 }

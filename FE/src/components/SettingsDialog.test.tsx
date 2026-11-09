@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/api";
-import { SecurityDialog } from "./SecurityDialog";
+import { SettingsDialog } from "./SettingsDialog";
 
 vi.mock("@/api", async () => ({ ...(await vi.importActual("@/api")), isPreview: false }));
 vi.mock("qrcode", () => ({
@@ -24,7 +24,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function setup(otpEnabled = false, requiresHttps = false) {
+function setup(otpEnabled = false, requiresHttps = false, security = true) {
   vi.spyOn(api.security, "getStatus").mockResolvedValue({
     otpEnabled,
     passwordChanged: false,
@@ -35,10 +35,20 @@ function setup(otpEnabled = false, requiresHttps = false) {
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <SecurityDialog open onOpenChange={vi.fn()} />
+      <SettingsDialog open onOpenChange={vi.fn()} />
     </QueryClientProvider>,
   );
+  if (security) fireEvent.click(screen.getByRole("button", { name: "비밀번호 변경" }));
 }
+it("설정은 일반 탭으로 열리고 사이트 이름과 기존 보안 설정을 함께 제공한다", async () => {
+  setup(false, false, false);
+  expect(await screen.findByLabelText("사이트 이름")).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "설정" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "일반" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByLabelText("새 비밀번호", { exact: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "비밀번호 변경" }));
+  expect(await screen.findByLabelText("새 비밀번호", { exact: true })).toBeInTheDocument();
+});
 it("HTTP에서는 비밀번호 입력을 받지 않고 HTTPS로 안내한다", async () => {
   setup(false, true);
   expect(await screen.findByRole("link", { name: "HTTPS에서 설정" })).toHaveAttribute(
