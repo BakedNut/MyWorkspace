@@ -35,6 +35,10 @@ npm run build
 
 스토리지는 `local-lvm → local(있을 때) → 나머지 이름 오름차순`으로 표시합니다. 숫자는 `disk2 → disk10`처럼 정렬하며 서버의 응답 순서나 사용량이 달라져도 표시 순서를 유지합니다.
 
+서버 그래프 기간은 `1m · 15m · 1H · 6H · 12H · 1D · 1W · 1M`이며 호스트와 VM/LXC에서 독립적으로 선택합니다. 그래프 위에 마우스를 올리거나 터치하면 가까운 기록 시각과 기간별 집계값을 표시합니다. 네트워크는 같은 시각의 Input·Output을 함께 표시하며, 기록이 없는 구간은 다른 시각의 값이나 0으로 대체하지 않습니다. 그래프에 포커스를 두고 방향키·Home·End로 탐색하고 Escape로 닫을 수 있습니다.
+
+시간축 툴팁 상호작용은 [Chart.js의 공식 예시](https://www.chartjs.org/docs/latest/samples/tooltip/interactions.html)를 참고했습니다. 기존 SVG 그래프에 적용했으며 그래프 라이브러리는 추가하지 않았습니다.
+
 API 계약은 [client.ts](src/api/client.ts), 화면 검증은 [design-qa.md](design-qa.md)를 참고하세요.
 
 ## 이전 시안 데이터 정리
