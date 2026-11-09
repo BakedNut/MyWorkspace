@@ -1,9 +1,45 @@
 import { describe, expect, it } from "vitest";
 import { sampleServerHistory } from "@/api/mock/server-history";
-import { formatRate, HISTORY_WINDOWS, usagePath } from "./server-history";
+import { formatRate, historySample, HISTORY_WINDOWS, usagePath } from "./server-history";
 import type { ServerRange } from "@/types/domain";
 
 describe("사용률 기록", () => {
+  it("커서와 가까운 같은 시각의 두 값을 고르고 누락된 값을 다른 시각으로 대체하지 않는다", () => {
+    const points = [
+      { at: 0, value: 0 },
+      { at: 5000, value: null },
+      { at: 10000, value: 80 },
+    ];
+    const output = [{ at: 5000, value: 2048 }];
+    expect(historySample(points, output, 5100, 0, 10000, 5000)).toEqual({
+      at: 5000,
+      value: null,
+      secondaryValue: 2048,
+    });
+    expect(historySample(points, output, 100, 0, 10000, 5000)).toEqual({
+      at: 0,
+      value: 0,
+      secondaryValue: null,
+    });
+    expect(historySample(points, output, 7500, 0, 10000, 5000).at).toBe(5000);
+  });
+  it("수집 전후의 빈 구간과 비정상 값은 기록 없음으로 유지한다", () => {
+    const points = [
+      { at: -1, value: 30 },
+      { at: 5000, value: Infinity },
+      { at: NaN, value: 20 },
+    ];
+    expect(historySample(points, [], 5000, 0, 20000, 5000)).toEqual({
+      at: 5000,
+      value: null,
+      secondaryValue: null,
+    });
+    expect(historySample(points, [], 19000, 0, 20000, 5000)).toEqual({
+      at: 19000,
+      value: null,
+      secondaryValue: null,
+    });
+  });
   it("네트워크는 백분율로 자르지 않고 바이트/초 단위로 그린다", () => {
     expect(
       usagePath(

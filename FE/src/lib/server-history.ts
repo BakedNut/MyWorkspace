@@ -11,6 +11,40 @@ export const HISTORY_WINDOWS: Record<ServerRange, { duration: number; step: numb
   "1M": { duration: 30 * 24 * 3600_000, step: 6 * 3600_000 },
 };
 
+/** Select one recorded time for both series; never bridge a gap with an older value. */
+export function historySample(
+  points: UsagePoint[],
+  secondary: UsagePoint[],
+  at: number,
+  from: number,
+  to: number,
+  step: number,
+) {
+  let nearest: number | undefined;
+  for (const point of [...points, ...secondary]) {
+    if (!Number.isFinite(point.at) || point.at < from || point.at > to) continue;
+    const distance = Math.abs(point.at - at);
+    if (
+      distance <= step / 2 &&
+      (nearest === undefined ||
+        distance < Math.abs(nearest - at) ||
+        (distance === Math.abs(nearest - at) && point.at < nearest))
+    ) {
+      nearest = point.at;
+    }
+  }
+  const valueAt = (series: UsagePoint[]) => {
+    if (nearest === undefined) return null;
+    const value = series.find((p) => p.at === nearest)?.value;
+    return value == null || !Number.isFinite(value) ? null : value;
+  };
+  return {
+    at: nearest ?? at,
+    value: valueAt(points),
+    secondaryValue: valueAt(secondary),
+  };
+}
+
 export function usagePath(points: UsagePoint[], from: number, to: number, maximum = 100) {
   if (to <= from || !Number.isFinite(maximum) || maximum <= 0) return "";
   let connected = false;
