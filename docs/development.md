@@ -15,3 +15,5 @@ MyWorkspace/
 ├── FE/
 └── docs/
 ```
+
+백엔드는 기능별 패키지와 역할별 클래스로 구성합니다. 상세 기준은 [백엔드 구조 안내](../BE/docs/architecture.md)를 참고하세요.
