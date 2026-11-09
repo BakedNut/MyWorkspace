@@ -235,11 +235,6 @@ function CalendarPage() {
           </label>
         ))}
       </fieldset>
-      {visibility.saving && (
-        <p role="status" className="mt-2 text-sm text-muted-foreground">
-          표시 설정 저장 중…
-        </p>
-      )}
       {visibility.saveError && (
         <p role="alert" className="mt-2 text-sm text-destructive">
           표시 설정을 저장하지 못했습니다. 이전 선택을 유지합니다. 다시 선택해 주세요.
