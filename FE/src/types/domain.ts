@@ -7,6 +7,11 @@
 export type DateKey = string; // YYYY-MM-DD (Asia/Seoul)
 export type TimeHM = string; // HH:mm (24h)
 
+export const DEFAULT_SITE_NAME = "MyWorkspace";
+export interface SiteSettings {
+  siteName: string;
+}
+
 // ---------- /api/auth ----------
 export interface Session {
   authenticated: true;

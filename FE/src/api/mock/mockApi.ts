@@ -1,5 +1,6 @@
 import type { ApiClient } from "../client";
 import { ApiError } from "../client";
+import { DEFAULT_SITE_NAME } from "@/types/domain";
 import type {
   CalendarEvent,
   CalendarInfo,
@@ -76,8 +77,21 @@ function validateEvent(input: EventInput) {
 
 // In-memory rate limit (the real server enforces its own limit).
 const lastWake = new Map<WolDeviceId, number>();
+let siteName = DEFAULT_SITE_NAME;
 
 export const mockApi: ApiClient = {
+  site: {
+    async get() {
+      return { siteName };
+    },
+    async save(input) {
+      const name = input.siteName.trim();
+      if (!name || input.siteName.length > 40 || /\p{Cc}/u.test(name))
+        throw new ApiError("사이트 이름을 줄바꿈 없이 1~40자로 입력하세요.", "VALIDATION");
+      siteName = name;
+      return { siteName };
+    },
+  },
   security: {
     async getStatus() {
       return {

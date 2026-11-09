@@ -52,6 +52,10 @@ export async function request<T>(
 }
 
 export const restApi: ApiClient = {
+  site: {
+    get: () => request("/site"),
+    save: (input) => request("/site", "PUT", input),
+  },
   security: {
     getStatus: () => request("/security"),
     async changePassword(input) {

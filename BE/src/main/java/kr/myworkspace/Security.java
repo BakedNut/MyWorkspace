@@ -8,6 +8,7 @@ import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -79,6 +80,8 @@ class Security {
                 auth.dispatcherTypeMatchers(DispatcherType.ERROR)
                     .permitAll()
                     .requestMatchers("/api/auth/**", "/api/health")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/site")
                     .permitAll()
                     .anyRequest()
                     .authenticated())

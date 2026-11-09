@@ -96,6 +96,34 @@ class ApiIntegrationTest {
   static final String LAN = "192.168.1.55", EXT = "198.51.100.55";
 
   @Test
+  @org.springframework.transaction.annotation.Transactional
+  void siteNameIsPublicToReadButProtectedAndValidatedToChange() throws Exception {
+    mvc.perform(get("/api/site").header(Security.CLIENT_HEADER, EXT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.siteName").value("MyWorkspace"));
+    mvc.perform(put("/api/site").header(Security.CLIENT_HEADER, EXT).with(csrf())
+            .contentType("application/json").content("{\"siteName\":\"외부 수정\"}"))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(put("/api/site").header(Security.CLIENT_HEADER, LAN)
+            .contentType("application/json").content("{\"siteName\":\"CSRF 확인\"}"))
+        .andExpect(status().isForbidden());
+    for (String name : List.of("", "   ", "x".repeat(41), "줄\n바꿈")) {
+      mvc.perform(put("/api/site").header(Security.CLIENT_HEADER, LAN).with(csrf())
+              .contentType("application/json").content(json.writeValueAsString(Map.of("siteName", name))))
+          .andExpect(status().isBadRequest());
+    }
+    assertThat(docs.read("site-settings", SiteName.class).siteName()).isEqualTo("MyWorkspace");
+    mvc.perform(put("/api/site").header(Security.CLIENT_HEADER, LAN).with(csrf())
+            .contentType("application/json").content("{\"siteName\":\"  나의 공간  \"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.siteName").value("나의 공간"));
+    assertThat(docs.read("site-settings", SiteName.class).siteName()).isEqualTo("나의 공간");
+    mvc.perform(get("/api/site").header(Security.CLIENT_HEADER, EXT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.siteName").value("나의 공간"));
+  }
+
+  @Test
   void verifiedNetworkIsCheckedEveryRequestAndNeverSavedAsPasswordSession() throws Exception {
     var session = new MockHttpSession();
     mvc.perform(get("/api/timetable").session(session).header(Security.CLIENT_HEADER, LAN))

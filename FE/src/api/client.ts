@@ -9,6 +9,7 @@ import type {
   ServerHistory,
   ServerRange,
   Session,
+  SiteSettings,
   SecurityStatus,
   SecurityProof,
   PasswordChange,
@@ -23,6 +24,7 @@ import type {
 /**
  * The contract between the UI and the backend.
  * Each group maps to a Spring Boot REST controller:
+ *   site      -> /api/site
  *   auth      -> /api/auth
  *   today     -> /api/today
  *   calendar  -> /api/calendar
@@ -33,6 +35,10 @@ import type {
  * `restApi` implements the live service; `mockApi` is for previews and unit tests.
  */
 export interface ApiClient {
+  site: {
+    get(): Promise<SiteSettings>;
+    save(input: SiteSettings): Promise<SiteSettings>;
+  };
   security: {
     getStatus(): Promise<SecurityStatus>;
     changePassword(input: PasswordChange): Promise<void>;
