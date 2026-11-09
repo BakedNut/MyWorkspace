@@ -41,6 +41,7 @@ const SCENARIOS: { value: ServerScenario; label: string }[] = [
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 const tb = (g: number) => (g >= 1000 ? `${(g / 1024).toFixed(2)} TB` : `${g} GB`);
+const storageRank = (name: string) => (name === "local-lvm" ? 0 : name === "local" ? 1 : 2);
 
 function Meter({ value, label }: { value: number; label: string }) {
   return (
@@ -153,6 +154,12 @@ function ServerPage() {
       ? "기록을 불러오지 못했습니다."
       : "기록 없음";
   const stale = data && now ? now.getTime() - new Date(data.updatedAt).getTime() > STALE_MS : false;
+  const storages = [...(data?.storages ?? [])].sort(
+    (a, b) =>
+      storageRank(a.name) - storageRank(b.name) ||
+      a.name.localeCompare(b.name, "ko", { numeric: true }) ||
+      a.name.localeCompare(b.name, "ko"),
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12">
@@ -318,11 +325,14 @@ function ServerPage() {
           </section>
 
           <section aria-labelledby="storage-title">
-            <h2 id="storage-title" className="text-lg font-bold">
-              스토리지
-            </h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="storage-title" className="text-lg font-bold">
+                스토리지
+              </h2>
+              <span className="text-xs text-muted-foreground">local-lvm → local → 이름순</span>
+            </div>
             <ul className="mt-3 divide-y border-y">
-              {data.storages.map((s) => {
+              {storages.map((s) => {
                 const p = pct(s.usedGb, s.totalGb);
                 return (
                   <li
