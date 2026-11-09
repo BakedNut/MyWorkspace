@@ -20,3 +20,7 @@ Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
 호스트 센서 수집에는 `SENSOR_KEY`, `SENSOR_TARGET`, `SENSOR_KNOWN_HOSTS`를 운영 환경에서 지정합니다. 실제 접속 주소·계정·경로는 코드에 포함하지 않습니다.
 
 화면과의 계약은 [API 인터페이스](../FE/src/api/client.ts)를 참고하세요. 운영 환경별 접근 정보와 복구 자료는 비공개로 관리합니다.
+
+## 캘린더 표시 설정
+
+인증된 `GET /api/calendar/visibility`와 CSRF가 필요한 `PUT /api/calendar/visibility`로 `hiddenCalendarIds`를 조회·저장합니다. 학교 시간표는 `__school`, iCloud는 각 캘린더 ID를 사용하며 MySQL의 별도 문서에 저장합니다. 초기값은 전체 표시입니다. 일정·시간표 원본은 변경하지 않습니다.

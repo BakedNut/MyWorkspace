@@ -9,6 +9,7 @@ import { ICloudDialog } from "@/components/ICloudDialog";
 import { TimetableDialog } from "@/components/TimetableDialog";
 import { Button } from "@/components/ui/button";
 import { colorClasses } from "@/lib/calendar-colors";
+import { useCalendarVisibility } from "@/lib/calendar-visibility";
 import { expandTimetable } from "@/lib/schedule";
 import {
   WEEKDAYS,
@@ -51,7 +52,8 @@ function CalendarPage() {
   const [today, setToday] = useState<string | null>(null);
   const [view, setView] = useState<{ y: number; m: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const visibility = useCalendarVisibility();
+  const { hidden, toggle } = visibility;
   const [eventDlg, setEventDlg] = useState<{ open: boolean; event?: CalendarEvent; date?: string }>(
     { open: false },
   );
@@ -134,13 +136,21 @@ function CalendarPage() {
 
   if (!view || !today) return <p className="p-10 text-muted-foreground">불러오는 중…</p>;
 
-  const toggle = (id: string) =>
-    setHidden((h) => {
-      const n = new Set(h);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+  if (!visibility.query.isSuccess)
+    return (
+      <div className="p-10">
+        {visibility.query.isError ? (
+          <>
+            <p role="alert">캘린더 표시 설정을 불러오지 못했습니다.</p>
+            <Button variant="outline" className="mt-3" onClick={() => visibility.query.refetch()}>
+              다시 시도
+            </Button>
+          </>
+        ) : (
+          <p className="text-muted-foreground">불러오는 중…</p>
+        )}
+      </div>
+    );
 
   const selEvents = selected ? (eventsByDate.get(selected) ?? []) : [];
   const selClasses = selected ? (classesByDate.get(selected) ?? []) : [];
@@ -217,6 +227,7 @@ function CalendarPage() {
               type="checkbox"
               className="size-4 accent-primary"
               checked={!hidden.has(c.id)}
+              disabled={visibility.saving || visibility.query.isFetching}
               onChange={() => toggle(c.id)}
             />
             <span aria-hidden className={cn("size-2.5 rounded-full", colorClasses[c.color].dot)} />
@@ -224,6 +235,16 @@ function CalendarPage() {
           </label>
         ))}
       </fieldset>
+      {visibility.saving && (
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
+          표시 설정 저장 중…
+        </p>
+      )}
+      {visibility.saveError && (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          표시 설정을 저장하지 못했습니다. 이전 선택을 유지합니다. 다시 선택해 주세요.
+        </p>
+      )}
 
       <div className="mt-4 grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
         {/* Month grid */}
