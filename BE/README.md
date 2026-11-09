@@ -8,6 +8,12 @@ Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
 
 통합 테스트는 H2의 MySQL 모드로 별도 실행합니다. 운영 스키마는 Flyway로 관리합니다. 실행 환경값과 계정 정보는 저장소에 포함하지 않습니다.
 
+## 구조
+
+인증(`auth`)·일정/시간표(`calendar`)·서버 상태(`server`)·WOL(`wol`)·사이트 설정(`settings`)을 기능별 패키지로 관리합니다. 각 기능 안에서 Controller·Service·Repository·데이터 클래스를 파일별로 구분하며 공통 저장·암호화·오류 처리는 `common`에 둡니다.
+
+구조 선택 이유와 호출 방향, 새 코드를 추가할 위치는 [백엔드 구조 안내](docs/architecture.md)를 참고하세요. 이전 패키지의 클래스가 남지 않도록 구조 변경 검증에는 `./mvnw clean verify`를 사용합니다.
+
 ## 기능
 
 - 로그인과 사용자 설정, 일정·공휴일·시간표, 서버 모니터링, WOL API를 제공합니다.
