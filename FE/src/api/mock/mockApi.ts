@@ -78,6 +78,7 @@ function validateEvent(input: EventInput) {
 // In-memory rate limit (the real server enforces its own limit).
 const lastWake = new Map<WolDeviceId, number>();
 let siteName = DEFAULT_SITE_NAME;
+let hiddenCalendarIds: string[] = [];
 
 export const mockApi: ApiClient = {
   site: {
@@ -163,6 +164,13 @@ export const mockApi: ApiClient = {
   },
 
   calendar: {
+    async getVisibility() {
+      return { hiddenCalendarIds: [...hiddenCalendarIds] };
+    },
+    async saveVisibility(input) {
+      hiddenCalendarIds = [...input.hiddenCalendarIds];
+      return { hiddenCalendarIds: [...hiddenCalendarIds] };
+    },
     async discoverICloud() {
       throw new ApiError("iCloud 연결은 실제 서비스에서 진행하세요.", "READ_ONLY");
     },

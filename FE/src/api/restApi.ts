@@ -85,6 +85,8 @@ export const restApi: ApiClient = {
   },
   today: { get: (date) => request(`/today?date=${encodeURIComponent(date)}`) },
   calendar: {
+    getVisibility: () => request("/calendar/visibility"),
+    saveVisibility: (input) => request("/calendar/visibility", "PUT", input),
     listCalendars: () => request("/calendar/calendars"),
     listEvents: ({ from, to }) =>
       request(`/calendar/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),

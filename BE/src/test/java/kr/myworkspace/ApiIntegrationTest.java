@@ -26,6 +26,44 @@ import tools.jackson.databind.json.JsonMapper;
 class ApiIntegrationTest {
   @Test
   @org.springframework.transaction.annotation.Transactional
+  void calendarVisibilityPersistsAcrossRequestsAndRequiresAuthenticationAndCsrf() throws Exception {
+    mvc.perform(get("/api/calendar/visibility").header(Security.CLIENT_HEADER, EXT))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN))
+        .andExpect(content().json("{\"hiddenCalendarIds\":[]}"));
+    String input = "{\"hiddenCalendarIds\":[\"__school\",\"cal-remote\"]}";
+    mvc.perform(put("/api/calendar/visibility").header(Security.CLIENT_HEADER, EXT).with(csrf())
+            .contentType("application/json").content(input))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(put("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN)
+            .contentType("application/json").content(input))
+        .andExpect(status().isForbidden());
+    for (String invalid : List.of("{}", "{\"hiddenCalendarIds\":null}",
+        "{\"hiddenCalendarIds\":[\"\"]}",
+        json.writeValueAsString(Map.of("hiddenCalendarIds", List.of("x".repeat(65)))),
+        json.writeValueAsString(Map.of("hiddenCalendarIds",
+            java.util.stream.IntStream.range(0, 101).mapToObj(i -> "cal-" + i).toList())))) {
+      mvc.perform(put("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN).with(csrf())
+              .contentType("application/json").content(invalid))
+          .andExpect(status().isBadRequest());
+    }
+    assertThat(docs.read("calendar-visibility", CalendarVisibility.class).hiddenCalendarIds()).isEmpty();
+    mvc.perform(put("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN).with(csrf())
+            .contentType("application/json").content(input))
+        .andExpect(status().isOk()).andExpect(content().json(input));
+    assertThat(docs.read("calendar-visibility", CalendarVisibility.class).hiddenCalendarIds())
+        .containsExactlyInAnyOrder("__school", "cal-remote");
+    mvc.perform(get("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN))
+        .andExpect(status().isOk()).andExpect(content().json(input));
+    mvc.perform(put("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN).with(csrf())
+            .contentType("application/json").content("{\"hiddenCalendarIds\":[]}"))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/calendar/visibility").header(Security.CLIENT_HEADER, LAN))
+        .andExpect(content().json("{\"hiddenCalendarIds\":[]}"));
+  }
+
+  @Test
+  @org.springframework.transaction.annotation.Transactional
   void oneCourseSupportsSplitTimesAndIndependentCancellations() throws Exception {
     var table =
         new Timetable(

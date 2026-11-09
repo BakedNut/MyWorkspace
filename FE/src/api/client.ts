@@ -1,6 +1,7 @@
 import type {
   CalendarEvent,
   CalendarInfo,
+  CalendarVisibility,
   DateKey,
   EventInput,
   ICloudStatus,
@@ -55,6 +56,8 @@ export interface ApiClient {
     get(date: DateKey): Promise<TodayItem[]>;
   };
   calendar: {
+    getVisibility(): Promise<CalendarVisibility>;
+    saveVisibility(input: CalendarVisibility): Promise<CalendarVisibility>;
     listCalendars(): Promise<CalendarInfo[]>;
     listEvents(range: { from: DateKey; to: DateKey }): Promise<CalendarEvent[]>;
     createEvent(input: EventInput): Promise<CalendarEvent>;

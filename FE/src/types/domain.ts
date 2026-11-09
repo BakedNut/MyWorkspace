@@ -39,6 +39,10 @@ export interface OtpSetup {
 }
 
 // ---------- /api/calendar ----------
+export interface CalendarVisibility {
+  hiddenCalendarIds: string[];
+}
+
 export type CalendarSource = "icloud" | "local" | "holiday";
 export type CalendarColor = "icloud" | "personal" | "holiday" | "school";
 
