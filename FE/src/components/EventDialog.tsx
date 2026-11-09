@@ -42,11 +42,13 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
   const qc = useQueryClient();
   const uid = useId();
   const writable = calendars.filter((c) => !c.readOnly);
+  const createCalendar = calendars.find((c) => c.id === "cal-remote") ?? writable[0];
+  const createUnavailable = !event && (!createCalendar || createCalendar.readOnly);
   const eventCal = event ? calendars.find((c) => c.id === event.calendarId) : undefined;
   const readOnly = !!eventCal?.readOnly || !!event?.readOnly;
 
   const blank = (): EventInput => ({
-    calendarId: writable[0]?.id ?? "",
+    calendarId: createCalendar?.id ?? "",
     title: "",
     date: defaults?.date ?? "",
     allDay: false,
@@ -94,10 +96,12 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (createUnavailable)
+      return setError("일정을 저장할 수 없습니다. iCloud 연결 상태를 확인하세요.");
     if (!form.title.trim()) return setError("제목을 입력하세요.");
     if (!form.date) return setError("날짜를 선택하세요.");
     if (timeInvalid) return setError("종료 시간은 시작 시간보다 늦어야 합니다.");
-    const input = { ...form };
+    const input = { ...form, calendarId: event ? form.calendarId : createCalendar!.id };
     if (input.allDay) {
       delete input.start;
       delete input.end;
@@ -138,32 +142,20 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                 autoFocus
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
-                <Label htmlFor={`${uid}-cal`}>캘린더</Label>
-                <select
-                  id={`${uid}-cal`}
-                  className={selectClass}
-                  value={form.calendarId}
-                  onChange={(e) => set("calendarId", e.target.value)}
-                >
-                  {(readOnly ? calendars : writable).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="min-w-0 space-y-1.5">
-                <Label htmlFor={`${uid}-date`}>날짜</Label>
-                <Input
-                  id={`${uid}-date`}
-                  type="date"
-                  value={form.date}
-                  onChange={(e) => set("date", e.target.value)}
-                  required
-                />
-              </div>
+            {createUnavailable && (
+              <p role="alert" className="text-sm text-destructive">
+                일정을 저장할 수 없습니다. iCloud 연결 상태를 확인하세요.
+              </p>
+            )}
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor={`${uid}-date`}>날짜</Label>
+              <Input
+                id={`${uid}-date`}
+                type="date"
+                value={form.date}
+                onChange={(e) => set("date", e.target.value)}
+                required
+              />
             </div>
             <div className="flex items-center gap-3">
               <Switch
@@ -248,7 +240,7 @@ export function EventDialog({ open, onOpenChange, calendars, event, defaults }: 
                 {readOnly ? "닫기" : "취소"}
               </Button>
               {!readOnly && (
-                <Button type="submit" disabled={saveMut.isPending}>
+                <Button type="submit" disabled={saveMut.isPending || createUnavailable}>
                   {saveMut.isPending ? "저장 중…" : saveMut.isError ? "다시 저장" : "저장"}
                 </Button>
               )}
