@@ -333,7 +333,6 @@ function ServerPage() {
               <h2 id="storage-title" className="text-lg font-bold">
                 스토리지
               </h2>
-              <span className="text-xs text-muted-foreground">local-lvm → local → 이름순</span>
             </div>
             <ul className="mt-3 divide-y border-y">
               {storages.map((s) => {
