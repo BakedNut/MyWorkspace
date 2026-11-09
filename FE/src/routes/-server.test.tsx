@@ -8,6 +8,47 @@ import { Route } from "./server";
 
 const Page = Route.options.component as ComponentType;
 
+it("새 시간 범위를 호스트와 게스트에서 독립적으로 선택한다", async () => {
+  localStorage.clear();
+  vi.spyOn(api.server, "getStatus").mockResolvedValue({
+    ...sampleServerStatus(new Date(), false),
+    guests: [],
+  });
+  const history = vi.spyOn(api.server, "getHistory").mockResolvedValue({
+    from: 0,
+    to: 1,
+    host: { cpu: [], ram: [], input: [], output: [] },
+    guests: {},
+  });
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <Page />
+    </QueryClientProvider>,
+  );
+  const host = within(await screen.findByRole("group", { name: "호스트 그래프 기간" }));
+  const guest = within(screen.getByRole("group", { name: "VM/LXC 그래프 기간" }));
+  expect(host.getAllByRole("button").map((b) => b.textContent)).toEqual([
+    "1m",
+    "15m",
+    "1H",
+    "6H",
+    "12H",
+    "1D",
+    "1W",
+    "1M",
+  ]);
+  for (const range of ["1H", "6H", "12H"]) {
+    fireEvent.click(host.getByRole("button", { name: range }));
+    await waitFor(() => expect(history).toHaveBeenCalledWith(range));
+    expect(guest.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
+  }
+  fireEvent.click(guest.getByRole("button", { name: "6H" }));
+  expect(guest.getByRole("button", { name: "6H" })).toHaveAttribute("aria-pressed", "true");
+  expect(host.getByRole("button", { name: "12H" })).toHaveAttribute("aria-pressed", "true");
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

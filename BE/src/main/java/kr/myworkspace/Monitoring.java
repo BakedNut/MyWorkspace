@@ -16,7 +16,7 @@ import tools.jackson.databind.JsonNode;
 class Monitoring {
   final Documents docs;
   final JdbcTemplate jdbc;
-  final String base, token, node, sensorKey;
+  final String base, token, node, sensorKey, sensorTarget, sensorKnownHosts;
   final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   volatile Map<String, Object> snapshot;
   volatile boolean failed = true;
@@ -29,13 +29,17 @@ class Monitoring {
       @Value("${app.proxmox-url}") String base,
       @Value("${app.proxmox-token}") String token,
       @Value("${app.proxmox-node}") String node,
-      @Value("${app.sensor-key}") String sensorKey) {
+      @Value("${app.sensor-key}") String sensorKey,
+      @Value("${SENSOR_TARGET:}") String sensorTarget,
+      @Value("${SENSOR_KNOWN_HOSTS:}") String sensorKnownHosts) {
     this.docs = docs;
     this.jdbc = jdbc;
     this.base = base;
     this.token = token;
     this.node = node;
     this.sensorKey = sensorKey;
+    this.sensorTarget = sensorTarget;
+    this.sensorKnownHosts = sensorKnownHosts;
   }
 
   JsonNode get(String path) throws Exception {
@@ -63,7 +67,8 @@ class Monitoring {
   }
 
   JsonNode sensors() {
-    if (sensorKey.isBlank()) return docs.json.createObjectNode();
+    if (sensorKey.isBlank() || sensorTarget.isBlank() || sensorKnownHosts.isBlank())
+      return docs.json.createObjectNode();
     try {
       Process process =
           new ProcessBuilder(
@@ -79,8 +84,8 @@ class Monitoring {
                   "-o",
                   "StrictHostKeyChecking=yes",
                   "-o",
-                  "UserKnownHostsFile=/etc/myworkspace/sensor-known-hosts",
-                  "myworkspace-sensors@192.168.1.110")
+                  "UserKnownHostsFile=" + sensorKnownHosts,
+                  sensorTarget)
               .redirectError(ProcessBuilder.Redirect.DISCARD)
               .start();
       if (!process.waitFor(3, TimeUnit.SECONDS)) {
@@ -251,6 +256,9 @@ class Monitoring {
         switch (range) {
           case "1m" -> 60_000;
           case "15m" -> 900_000;
+          case "1H" -> 3600_000;
+          case "6H" -> 6L * 3600_000;
+          case "12H" -> 12L * 3600_000;
           case "1D" -> 86400_000;
           case "1W" -> 7L * 86400_000;
           case "1M" -> 30L * 86400_000;
@@ -259,7 +267,9 @@ class Monitoring {
     long step =
         switch (range) {
           case "1m" -> 5000;
-          case "15m" -> 60_000;
+          case "15m", "1H" -> 60_000;
+          case "6H" -> 300_000;
+          case "12H" -> 600_000;
           case "1D" -> 900_000;
           case "1W" -> 3600_000;
           default -> 21600_000;

@@ -88,7 +88,11 @@ function RangePicker({
   label: string;
 }) {
   return (
-    <div role="group" aria-label={label} className="flex gap-1 rounded-lg border p-1">
+    <div
+      role="group"
+      aria-label={label}
+      className="flex max-w-full flex-wrap gap-1 rounded-lg border p-1"
+    >
       {(Object.keys(HISTORY_WINDOWS) as ServerRange[]).map((r) => (
         <button
           key={r}

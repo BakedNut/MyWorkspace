@@ -156,7 +156,7 @@ export interface ServerStatus {
   guests: GuestStatus[];
 }
 
-export type ServerRange = "1m" | "15m" | "1D" | "1W" | "1M";
+export type ServerRange = "1m" | "15m" | "1H" | "6H" | "12H" | "1D" | "1W" | "1M";
 export interface UsagePoint {
   at: number;
   value: number | null;

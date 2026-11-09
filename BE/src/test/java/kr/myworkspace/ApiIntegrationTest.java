@@ -272,8 +272,38 @@ class ApiIntegrationTest {
   }
 
   @Test
+  @org.springframework.transaction.annotation.Transactional
+  void hourlyHistoryRangesUseTheirOwnWindowsAndAggregation() {
+    var actual = new Monitoring(docs, jdbc, "", "", "proxmox", "", "", "");
+    actual.snapshot = Map.of("guests", List.of(Map.of("id", 9876, "type", "lxc")));
+    long at = System.currentTimeMillis() / 600_000 * 600_000 - 1200_000;
+    actual.sample(
+        at, "9876", 10, 20,
+        Map.of("inputBytesPerSecond", 100d, "outputBytesPerSecond", 300d), 30d);
+    actual.sample(
+        at + 60_000, "9876", 30, 40,
+        Map.of("inputBytesPerSecond", 300d, "outputBytesPerSecond", 500d), 50d);
+    for (var entry :
+        Map.of("1H", 3600_000L, "6H", 6L * 3600_000, "12H", 12L * 3600_000).entrySet()) {
+      var value = docs.json.valueToTree(actual.history(entry.getKey()));
+      assertThat(value.path("to").asLong() - value.path("from").asLong())
+          .isEqualTo(entry.getValue());
+      var guest = value.path("guests").path("lxc-9876");
+      if (entry.getKey().equals("1H")) {
+        assertThat(guest.path("cpu").size()).isEqualTo(2);
+        assertThat(guest.path("cpu").get(0).path("value").asDouble()).isEqualTo(10);
+      } else {
+        assertThat(guest.path("cpu").size()).isEqualTo(1);
+        assertThat(guest.path("cpu").get(0).path("value").asDouble()).isEqualTo(20);
+        assertThat(guest.path("input").get(0).path("value").asDouble()).isEqualTo(200);
+        assertThat(guest.path("disk").get(0).path("value").asDouble()).isEqualTo(40);
+      }
+    }
+  }
+
+  @Test
   void historyUsesGuestKeysAndRetentionKeepsMinuteSamples() {
-    var actual = new Monitoring(docs, jdbc, "", "", "proxmox", "");
+    var actual = new Monitoring(docs, jdbc, "", "", "proxmox", "", "", "");
     actual.snapshot = Map.of("guests", List.of(Map.of("id", 42, "type", "lxc")));
     long at = System.currentTimeMillis() / 60_000 * 60_000 - 7200_000;
     actual.sample(

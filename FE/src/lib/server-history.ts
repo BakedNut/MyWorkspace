@@ -3,6 +3,9 @@ import type { ServerRange, UsagePoint } from "@/types/domain";
 export const HISTORY_WINDOWS: Record<ServerRange, { duration: number; step: number }> = {
   "1m": { duration: 60_000, step: 5_000 },
   "15m": { duration: 15 * 60_000, step: 60_000 },
+  "1H": { duration: 3600_000, step: 60_000 },
+  "6H": { duration: 6 * 3600_000, step: 5 * 60_000 },
+  "12H": { duration: 12 * 3600_000, step: 10 * 60_000 },
   "1D": { duration: 24 * 3600_000, step: 15 * 60_000 },
   "1W": { duration: 7 * 24 * 3600_000, step: 3600_000 },
   "1M": { duration: 30 * 24 * 3600_000, step: 6 * 3600_000 },
