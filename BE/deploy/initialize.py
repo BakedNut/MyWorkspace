@@ -1,6 +1,5 @@
 """Run on the Proxmox host as root. Secrets stay in root-only server files."""
 from pathlib import Path
-import bcrypt
 import json
 import secrets
 import subprocess
@@ -17,6 +16,8 @@ def private_file(ct, path, text, mode=0o600):
 
 
 def initialize():
+    import bcrypt
+
     # Refuse to initialize any existing database or overwrite existing credentials.
     if run(202, ["find", "/var/lib/mysql", "-mindepth", "1", "-maxdepth", "1"]).strip():
         raise SystemExit("MySQL data already exists; inspect it before running initialization.")
