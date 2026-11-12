@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -157,6 +158,23 @@ class MySqlIntegrationTest {
     transactions.executeWithoutResult(
         tx -> cache.cache(date, date, events, List.of(resource), state));
     assertThat(cache.read(date, date)).hasSize(1);
+    transactions.executeWithoutResult(
+        tx -> {
+          cache.markStale();
+          cache.patch(
+              resource.href(),
+              List.of(
+                  Map.of(
+                      "id",
+                      "icloud-" + CalDavClient.id(resource.href()) + "-0123456789ab",
+                      "date",
+                      date.toString(),
+                      "title",
+                      "patched")));
+        });
+    assertThat(cache.lookup(date, date).stale()).isTrue();
+    assertThat(cache.read(date, date)).extracting(e -> e.get("title")).containsExactly("patched");
+
     assertThat(cache.ranges().getFirst()).containsExactly(date, date);
     String id = "icloud-" + CalDavClient.id(resource.href()) + "-0123456789ab";
     assertThat(cache.resource(id)).containsEntry("etag", "v1");

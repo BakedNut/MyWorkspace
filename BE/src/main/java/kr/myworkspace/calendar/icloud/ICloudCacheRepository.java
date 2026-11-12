@@ -3,6 +3,7 @@ package kr.myworkspace.calendar.icloud;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import kr.myworkspace.common.error.ApiException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -75,36 +76,72 @@ class ICloudCacheRepository {
     }
   }
 
-  List<Map<String, Object>> read(LocalDate from, LocalDate to) {
+  record Lookup(List<Map<String, Object>> events, boolean stale) {}
+
+  Lookup lookup(LocalDate from, LocalDate to) {
     var rows =
         jdbc.queryForList(
-            "select cache_key,payload from icloud_range where from_date <= ? and to_date >= ? order"
-                + " by fetched_at desc limit 1",
+            "select cache_key,payload,fetched_at from icloud_range where from_date <= ? and to_date"
+                + " >= ? order by fetched_at desc,accessed_at desc limit 1",
             from,
             to);
-    if (rows.isEmpty()) return List.of();
+    if (rows.isEmpty()) return new Lookup(List.of(), true);
+    var row = rows.getFirst();
     jdbc.update(
         "update icloud_range set accessed_at=? where cache_key=?",
         System.currentTimeMillis(),
-        rows.getFirst().get("cache_key"));
-    List<Map<String, Object>> values =
-        json.readValue((String) rows.getFirst().get("payload"), List.class);
-    return values.stream()
-        .filter(
-            e ->
-                e.get("date").toString().compareTo(from.toString()) >= 0
-                    && e.get("date").toString().compareTo(to.toString()) <= 0)
-        .toList();
+        row.get("cache_key"));
+    List<Map<String, Object>> values = json.readValue((String) row.get("payload"), List.class);
+    var selected =
+        values.stream()
+            .filter(
+                e ->
+                    e.get("date").toString().compareTo(from.toString()) >= 0
+                        && e.get("date").toString().compareTo(to.toString()) <= 0)
+            .toList();
+    return new Lookup(
+        selected,
+        ((Number) row.get("fetched_at")).longValue() < System.currentTimeMillis() - 60_000);
   }
 
-  boolean stale(LocalDate from, LocalDate to) {
-    var times =
-        jdbc.query(
-            "select fetched_at from icloud_range where cache_key=?",
-            (r, n) -> r.getLong(1),
-            from + ":" + to);
-    return times.isEmpty() || times.getFirst() < System.currentTimeMillis() - 60_000;
+  List<Map<String, Object>> read(LocalDate from, LocalDate to) {
+    return lookup(from, to).events();
   }
+
+  void markStale() {
+    jdbc.update("update icloud_range set fetched_at=0");
+  }
+
+  void patch(String href, List<Map<String, Object>> changed) {
+    String prefix = "icloud-" + CalDavClient.id(href) + "-";
+    var ranges =
+        jdbc.query(
+            "select cache_key,from_date,to_date,payload from icloud_range",
+            (row, n) ->
+                new CachedRange(
+                    row.getString(1),
+                    row.getDate(2).toLocalDate(),
+                    row.getDate(3).toLocalDate(),
+                    row.getString(4)));
+    for (var range : ranges) {
+      List<Map<String, Object>> old = json.readValue(range.payload(), List.class);
+      var values =
+          new java.util.ArrayList<>(
+              old.stream()
+                  .filter(e -> !Objects.toString(e.get("id"), "").startsWith(prefix))
+                  .toList());
+      for (var event : changed) {
+        LocalDate date = LocalDate.parse((String) event.get("date"));
+        if (!date.isBefore(range.from()) && !date.isAfter(range.to())) values.add(event);
+      }
+      jdbc.update(
+          "update icloud_range set payload=?,fetched_at=0 where cache_key=?",
+          json.writeValueAsString(values),
+          range.key());
+    }
+  }
+
+  record CachedRange(String key, LocalDate from, LocalDate to, String payload) {}
 
   List<LocalDate[]> ranges() {
     return jdbc.query(

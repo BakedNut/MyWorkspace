@@ -21,9 +21,9 @@ class CalDavTest {
     var resource =
         new CloudResource(
             "https://p01-caldav.icloud.com/a/1.ics", "v1", ICalendarMapper.write(input, null));
-    assertThat(ICloudService.matches(input, resource)).isTrue();
+    assertThat(ICloudEventService.matches(input, resource)).isTrue();
     assertThat(
-            ICloudService.matches(
+            ICloudEventService.matches(
                 new EventInput("cal-remote", "다른 내용", date, false, "09:00", "10:00", null, null),
                 resource))
         .isFalse();

@@ -82,12 +82,14 @@ function Index() {
   const { data: selectedItems, isLoading: selectedLoading } = useQuery({
     queryKey: ["schedule", "today", selected],
     queryFn: () => api.today.get(selected!),
+    refetchInterval: 5_000,
     enabled: !!selected,
   });
 
   const { data: items, isLoading } = useQuery({
     queryKey: ["schedule", "today", today],
     queryFn: () => api.today.get(today!),
+    refetchInterval: 5_000,
     enabled: !!today,
   });
   const { data: calendars = [] } = useQuery({
@@ -97,6 +99,7 @@ function Index() {
   const { data: monthEvents = [] } = useQuery({
     queryKey: ["schedule", "events", from, to],
     queryFn: () => api.calendar.listEvents({ from: from!, to: to! }),
+    refetchInterval: 5_000,
     enabled: !!from,
   });
 

@@ -87,6 +87,7 @@ function CalendarPage() {
   } = useQuery({
     queryKey: ["schedule", "events", from, to],
     queryFn: () => api.calendar.listEvents({ from: from!, to: to! }),
+    refetchInterval: 5_000,
     enabled: !!from,
   });
   const { data: holidays } = useQuery({
