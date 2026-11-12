@@ -141,11 +141,25 @@ class ICloudSyncService {
                     LocalDate.now(ICalendarMapper.SEOUL).withDayOfMonth(1).minusDays(7);
                 ranges = List.<LocalDate[]>of(new LocalDate[] {from, from.plusDays(49)});
               }
+              boolean allSucceeded = true;
               for (var range : ranges) {
                 boolean applied = refresh(range[0], range[1]);
-                if (!applied && coordinator.read().error() == null) refresh(range[0], range[1]);
+                if (!applied && coordinator.read().error() == null)
+                  applied = refresh(range[0], range[1]);
+                allSucceeded &= applied;
               }
               synchronized (coordinator.lock) {
+                if (!allSucceeded && coordinator.unchanged(before)) {
+                  var current = coordinator.read();
+                  String message = "일부 iCloud 조회 기간을 갱신하지 못했습니다. 다시 동기화하세요.";
+                  coordinator.store(
+                      new CloudState(
+                          current.encryptedCredentials(),
+                          current.calendar(),
+                          current.lastSyncedAt(),
+                          message));
+                  throw new ApiException(503, "NETWORK", message);
+                }
                 activeSync = null;
               }
               result.complete(before.generation());
@@ -180,6 +194,7 @@ class ICloudSyncService {
       } catch (TimeoutException error) {
         throw new ApiException(409, "SYNC_IN_PROGRESS", "동기화가 진행 중입니다. 잠시 후 다시 확인하세요.");
       } catch (ExecutionException error) {
+        if (error.getCause() instanceof ApiException api) throw api;
         throw new ApiException(503, "NETWORK", "iCloud 동기화를 완료하지 못했습니다.");
       }
       synchronized (coordinator.lock) {

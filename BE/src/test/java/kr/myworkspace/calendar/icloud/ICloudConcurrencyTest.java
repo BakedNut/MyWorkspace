@@ -265,6 +265,88 @@ class ICloudConcurrencyTest {
   }
 
   @Test
+  void manualSyncFailsIfEarlierRangeFailsAndLaterRangeSucceedsAndRecoversOnRetry()
+      throws Exception {
+    service.disconnect();
+    var state = connected();
+    var first = LocalDate.of(2026, 11, 12);
+    var second = first.plusMonths(1);
+    cache.cache(
+        first,
+        first,
+        List.of(Map.of("date", first.toString(), "title", "old first")),
+        List.of(),
+        state);
+    cache.cache(
+        second,
+        second,
+        List.of(Map.of("date", second.toString(), "title", "old second")),
+        List.of(),
+        state);
+    doReturn(List.<LocalDate[]>of(new LocalDate[] {first, first}, new LocalDate[] {second, second}))
+        .when(cache)
+        .ranges();
+    var firstResource =
+        new CloudResource(
+            state.calendar().href() + "first.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "updated first", first, true, null, null, null, null),
+                null));
+    var secondResource =
+        new CloudResource(
+            state.calendar().href() + "second.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput(
+                    "cal-remote", "updated second", second, true, null, null, null, null),
+                null));
+    doThrow(new kr.myworkspace.common.error.ApiException(503, "NETWORK", "fixture failure"))
+        .when(dav)
+        .query(any(), any(), eq(first), eq(first));
+    doReturn(List.of(secondResource)).when(dav).query(any(), any(), eq(second), eq(second));
+
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                    "/api/calendar/icloud/sync")
+                .header(kr.myworkspace.auth.SecurityConfig.CLIENT_HEADER, "192.168.1.55")
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.csrf()))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                .isServiceUnavailable())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code")
+                .value("NETWORK"));
+    assertThat(coordinator.read().error()).contains("일부");
+    var ordered = inOrder(dav);
+    ordered.verify(dav).query(any(), any(), eq(first), eq(first));
+    ordered.verify(dav).query(any(), any(), eq(second), eq(second));
+    assertThat(cache.read(first, first))
+        .extracting(e -> e.get("title"))
+        .containsExactly("old first");
+    assertThat(cache.read(second, second))
+        .extracting(e -> e.get("title"))
+        .containsExactly("updated second");
+
+    doReturn(List.of(firstResource)).when(dav).query(any(), any(), eq(first), eq(first));
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                    "/api/calendar/icloud/sync")
+                .header(kr.myworkspace.auth.SecurityConfig.CLIENT_HEADER, "192.168.1.55")
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.csrf()))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+    assertThat(cache.read(first, first))
+        .extracting(e -> e.get("title"))
+        .containsExactly("updated first");
+    assertThat(coordinator.read().error()).isNull();
+  }
+
+  @Test
   void manualSyncWaitsForAnExistingFullSync() throws Exception {
     waitsForExistingRefresh(true);
   }
