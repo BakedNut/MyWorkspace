@@ -16,6 +16,7 @@ import kr.myworkspace.auth.SecurityConfig;
 import kr.myworkspace.calendar.event.EventInput;
 import kr.myworkspace.calendar.holiday.HolidayService;
 import kr.myworkspace.common.error.ApiException;
+import kr.myworkspace.shortcuts.ShortcutBoard;
 import kr.myworkspace.wol.MagicPacketSender;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -47,7 +48,7 @@ class MySqlIntegrationTest {
 
   @Test
   void migrationsAndConcurrentCalendarAndWolRequestsUseRealMysqlLocks() throws Exception {
-    assertThat(flyway.info().applied()).hasSize(7);
+    assertThat(flyway.info().applied()).hasSize(8);
     var date = LocalDate.of(2026, 11, 12);
     var input = new EventInput("cal-icloud", "original", date, true, null, null, null, null);
     var created =
@@ -105,6 +106,52 @@ class MySqlIntegrationTest {
             jdbc.queryForObject(
                 "select count(*) from wol_request where device_id='mysql-pc'", Integer.class))
         .isEqualTo(1);
+  }
+
+  @Test
+  void shortcutEditsUseTheDocumentLockAndRejectStaleRevisions() throws Exception {
+    var response =
+        mvc.perform(get("/api/shortcuts").header(SecurityConfig.CLIENT_HEADER, LAN))
+            .andExpect(status().isOk())
+            .andReturn();
+    long revision =
+        json.readTree(response.getResponse().getContentAsString()).path("revision").asLong();
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var results =
+          pool.invokeAll(
+              List.of(
+                  (Callable<Integer>) () -> saveShortcuts(revision, "first"),
+                  () -> saveShortcuts(revision, "second")));
+      assertThat(
+              List.of(
+                  results.get(0).get(10, TimeUnit.SECONDS),
+                  results.get(1).get(10, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(200, 409);
+    }
+    mvc.perform(get("/api/shortcuts").header(SecurityConfig.CLIENT_HEADER, LAN))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.revision").value(revision + 1));
+  }
+
+  int saveShortcuts(long revision, String name) throws Exception {
+    var board =
+        new ShortcutBoard(
+            revision,
+            List.of(
+                new ShortcutBoard.Group(
+                    "mysql-links",
+                    name,
+                    false,
+                    List.of(new ShortcutBoard.Link("mysql-link", name, "https://example.com/")))));
+    return mvc.perform(
+            put("/api/shortcuts")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(board)))
+        .andReturn()
+        .getResponse()
+        .getStatus();
   }
 
   int update(String id, String revision, String title, LocalDate date) throws Exception {
