@@ -1,0 +1,7 @@
+[Unit]
+Description=MyWorkspace database backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/myworkspace-backup.py
+UMask=0077

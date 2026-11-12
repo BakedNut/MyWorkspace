@@ -1,0 +1,36 @@
+# Backend
+
+Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
+
+```sh
+./mvnw verify
+```
+
+통합 테스트는 H2의 MySQL 모드로 별도 실행합니다. 운영 스키마는 Flyway로 관리합니다. 실행 환경값과 계정 정보는 저장소에 포함하지 않습니다.
+
+## 구조
+
+인증(`auth`)·일정/시간표(`calendar`)·서버 상태(`server`)·WOL(`wol`)·사이트 설정(`settings`)을 기능별 패키지로 관리합니다. 각 기능 안에서 Controller·Service·Repository·데이터 클래스를 파일별로 구분하며 공통 저장·암호화·오류 처리는 `common`에 둡니다.
+
+구조 선택 이유와 호출 방향, 새 코드를 추가할 위치는 [백엔드 구조 안내](docs/architecture.md)를 참고하세요. 이전 패키지의 클래스가 남지 않도록 구조 변경 검증에는 `./mvnw clean verify`를 사용합니다.
+
+## 기능
+
+- 로그인과 사용자 설정, 일정·공휴일·시간표, 서버 모니터링, WOL API를 제공합니다.
+- 한 과목에 여러 수업 시간을 저장하며 각 시간의 휴강일·강의실과 전체 시간 겹침을 검사합니다. 기존 시간표도 읽을 수 있습니다.
+- iCloud 연결은 웹 설정에서 진행합니다. 일반 일정은 편집하고 반복·여러 날·초대 일정은 조회합니다.
+- 비밀번호 변경은 기존 비밀번호 또는 등록한 Google OTP로 확인합니다. OTP 등록도 별도 확인 절차를 거칩니다.
+- 사이트 이름을 서버에 저장합니다. 로그인 화면에서 사용할 이름 조회만 공개하고 변경은 기존 인증과 CSRF 보호를 적용합니다. 공백만 있는 값·제어 문자·40자를 넘는 이름은 거부합니다.
+- 서버 기록은 `1m · 15m · 1H · 6H · 12H · 1D · 1W · 1M` 범위를 지원합니다. 1H는 1분, 6H는 5분, 12H는 10분 단위의 평균 기록을 반환하며 누락 구간은 비어 있는 값으로 유지합니다.
+
+호스트 센서 수집에는 `SENSOR_KEY`, `SENSOR_TARGET`, `SENSOR_KNOWN_HOSTS`를 운영 환경에서 지정합니다. 실제 접속 주소·계정·경로는 코드에 포함하지 않습니다.
+
+화면과의 계약은 [API 인터페이스](../FE/src/api/client.ts)를 참고하세요. 운영 환경별 접근 정보와 복구 자료는 비공개로 관리합니다.
+
+## 캘린더 표시 설정
+
+인증된 `GET /api/calendar/visibility`와 CSRF가 필요한 `PUT /api/calendar/visibility`로 `hiddenCalendarIds`를 조회·저장합니다. 학교 시간표는 `__school`, iCloud는 각 캘린더 ID를 사용하며 MySQL의 별도 문서에 저장합니다. 초기값은 전체 표시입니다. 일정·시간표 원본은 변경하지 않습니다.
+
+## MySQL 통합 테스트
+
+기본 테스트는 H2에서 실행합니다. CI의 별도 mysql 작업은 MySQL 8.4 서비스에서 V1~V7 마이그레이션과 로컬 일정 revision/동시 갱신·삭제, WOL 잠금/예약, iCloud 캐시 날짜/읽기전용 메타데이터, 메트릭 SQL 집계를 검증합니다. `MYSQL_TEST_URL`, `MYSQL_TEST_USERNAME`, `MYSQL_TEST_PASSWORD`로 비어 있는 테스트 전용 DB를 지정하고 `./mvnw -Dtest=MySqlIntegrationTest verify`로 같은 검증을 실행할 수 있습니다. 배포 스크립트 테스트는 CI에서 별도로 실행합니다.
