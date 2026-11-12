@@ -89,7 +89,6 @@ class ShortcutIconService {
             ShortcutIcon icon = null;
             try {
               icon = fetcher.fetch(origin);
-              if (icon == null && cached != null) icon = cached.icon();
               ShortcutIcon result = icon;
               transactions.executeWithoutResult(tx -> store(key, result));
             } catch (RuntimeException error) {

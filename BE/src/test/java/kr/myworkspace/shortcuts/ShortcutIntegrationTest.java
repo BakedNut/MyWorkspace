@@ -35,6 +35,7 @@ class ShortcutIntegrationTest {
   @Autowired DocumentStore docs;
   @Autowired JsonMapper json;
   @Autowired JdbcTemplate jdbc;
+  @Autowired ShortcutIconService icons;
   @MockitoBean ShortcutIconFetcher fetcher;
   @MockitoBean MonitoringService monitor;
   @MockitoBean HolidayService holidays;
@@ -239,4 +240,22 @@ class ShortcutIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(content().bytes(new byte[] {9}));
   }
+  @Test
+  void removedIconsReplaceExpiredImagesWithANegativeCache() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    when(fetcher.fetch(URI.create("https://example.com/")))
+        .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+    jdbc.update("update shortcut_icon set checked_at=0");
+    when(fetcher.fetch(URI.create("https://example.com/"))).thenReturn(null);
+    icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS);
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    while (jdbc.queryForObject("select checked_at from shortcut_icon", Long.class) == 0
+        && System.nanoTime() < deadline) Thread.sleep(10);
+    assertThat(jdbc.queryForObject("select checked_at from shortcut_icon", Long.class)).isPositive();
+    assertThat(jdbc.queryForObject("select image_bytes from shortcut_icon", byte[].class)).isNull();
+    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS)).isNull();
+    verify(fetcher, times(2)).fetch(URI.create("https://example.com/"));
+  }
+
 }
