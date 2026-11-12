@@ -56,7 +56,15 @@ export const restApi: ApiClient = {
     iconUrl: (link) =>
       `/api/shortcuts/icons/${encodeURIComponent(link.id)}?site=${encodeURIComponent(new URL(link.url).origin)}`,
     get: () => request("/shortcuts"),
-    save: (input) => request("/shortcuts", "PUT", input),
+    async save(input) {
+      // Match client_max_body_size in FE/deploy/nginx.conf before sending the full board.
+      if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 128 * 1024)
+        throw new ApiError(
+          "바로가기 전체 데이터가 저장 한도 128KiB를 초과했습니다. 긴 URL이나 이름을 줄이거나 일부 바로가기를 삭제한 뒤 저장하세요.",
+          "VALIDATION",
+        );
+      return request("/shortcuts", "PUT", input);
+    },
   },
   site: {
     get: () => request("/site"),
