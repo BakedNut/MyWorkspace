@@ -1,10 +1,10 @@
 """Install read-only Proxmox access; run on the Proxmox host as root."""
 from pathlib import Path
 import json
-import os
 import pwd
 import subprocess
 from initialize import run, private_file
+from authorized_keys import install_authorized_key
 
 
 def host(args):
@@ -41,11 +41,7 @@ def configure():
     sensor.write_text(Path(__file__).with_name("sensors.py").read_text());sensor.chmod(0o755)
     from sensor_key import public_key
     public = public_key(run(200, ["python3", "-c", Path(__file__).with_name("sensor_key.py").read_text()]).rstrip("\n"))
-    ssh = Path(account.pw_dir) / ".ssh";ssh.mkdir(exist_ok=True, mode=0o700)
-    authorized = ssh / "authorized_keys"
-    authorized.write_text('from="192.168.1.200",restrict,command="/usr/local/libexec/myworkspace-sensors" ' + public + "\n")
-    authorized.chmod(0o600)
-    for path in [ssh, authorized]:os.chown(path, account.pw_uid, account.pw_gid)
+    install_authorized_key(account.pw_dir, account.pw_uid, account.pw_gid, public)
     hostkey = Path("/etc/ssh/ssh_host_ed25519_key.pub").read_text().split()
     private_file(200, "/etc/myworkspace/sensor-known-hosts", "192.168.1.110 " + " ".join(hostkey[:2]) + "\n", 0o644)
     config = "\n".join(line for line in config.splitlines() if not line.startswith("SENSOR_KEY=")) + "\nSENSOR_KEY=/etc/myworkspace/sensors/key\n"
