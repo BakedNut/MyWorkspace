@@ -101,3 +101,56 @@ it("정리 취소는 서버에 쓰지 않고 수정 저장은 기존 순서를 �
     "react",
   ]);
 });
+
+it("동시 편집 충돌 후 초안과 최신 변경을 합쳐 최신 revision으로 다시 저장한다", async () => {
+  const latest = structuredClone(initial);
+  latest.revision = 5;
+  latest.groups[0]!.links[1]!.name = "React 최신";
+  latest.groups[0]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/" });
+  const get = vi.mocked(api.shortcuts.get);
+  get.mockResolvedValueOnce(structuredClone(initial)).mockResolvedValue(latest);
+  const save = vi
+    .spyOn(api.shortcuts, "save")
+    .mockRejectedValueOnce(new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT"))
+    .mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "GitHub 바로가기 삭제" }));
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+  await screen.findByRole("button", { name: "React 최신 바로가기 수정" });
+  expect(screen.queryByRole("button", { name: "GitHub 바로가기 수정" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "새 링크 바로가기 수정" })).toBeInTheDocument();
+  expect(save).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("link", { name: "새 링크 새 탭에서 열기" });
+  expect(save.mock.calls[1]![0].revision).toBe(5);
+  expect(save.mock.calls[1]![0].groups[0]!.links.map((link) => link.id)).toEqual(["react", "new"]);
+});
+
+it("추가 모달을 취소하거나 Escape로 닫으면 실행 버튼으로 포커스를 복원한다", async () => {
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  const trigger = screen.getByRole("button", { name: "추가" });
+  fireEvent.click(trigger);
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "취소" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  fireEvent.click(trigger);
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape", code: "Escape" });
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+it("수정 완료 시 실행 버튼으로, 분류 삭제 시 대체 버튼으로 포커스를 복원한다", async () => {
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  const trigger = screen.getByRole("button", { name: "GitHub 바로가기 수정" });
+  fireEvent.click(trigger);
+  fireEvent.change(screen.getByLabelText("이름"), { target: { value: "코드" } });
+  fireEvent.click(screen.getByRole("button", { name: "완료" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  fireEvent.click(screen.getByRole("button", { name: "개발 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "분류 추가" })).toHaveFocus());
+});

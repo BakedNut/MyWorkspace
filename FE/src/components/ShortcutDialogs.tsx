@@ -22,6 +22,7 @@ export function ShortcutDialog({
   target,
   groups,
   onClose,
+  onRestoreFocus,
   onSaveLink,
   onSaveGroup,
   onDeleteGroup,
@@ -29,6 +30,7 @@ export function ShortcutDialog({
   target: ShortcutDialogTarget;
   groups: ShortcutGroup[];
   onClose(): void;
+  onRestoreFocus(): void;
   onSaveLink(input: { name: string; url: string; groupId: string }): Promise<void>;
   onSaveGroup(name: string): Promise<void>;
   onDeleteGroup(): Promise<void>;
@@ -56,7 +58,13 @@ export function ShortcutDialog({
           : "분류 추가";
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="max-h-[90dvh] w-[94vw] max-w-lg overflow-y-auto rounded-xl">
+      <DialogContent
+        className="max-h-[90dvh] w-[94vw] max-w-lg overflow-y-auto rounded-xl"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onRestoreFocus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

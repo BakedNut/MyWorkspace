@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Bookmark, Check, FolderPlus, GripVertical, Plus } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ApiError, api } from "@/api";
 import { ShortcutBoard } from "@/components/ShortcutBoard";
 import { ShortcutDialog, type ShortcutDialogTarget } from "@/components/ShortcutDialogs";
 import { Button } from "@/components/ui/button";
+import { reconcileShortcutBoard } from "@/lib/shortcuts";
 import type { ShortcutBoard as Board } from "@/types/domain";
 
 export const Route = createFileRoute("/shortcuts")({
@@ -28,32 +29,46 @@ function ShortcutsPage() {
     queryFn: () => api.shortcuts.get(),
     refetchOnWindowFocus: false,
   });
+  const dialogTrigger = useRef<HTMLButtonElement | null>(null);
+  const fallbackFocus = useRef<HTMLButtonElement | null>(null);
+  const editingBase = useRef<Board | null>(null);
+  const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
   const [dialog, setDialog] = useState<ShortcutDialogTarget | null>(null);
   const mutation = useMutation({
     mutationFn: (board: Board) => api.shortcuts.save(board),
     onSuccess: (saved) => queryClient.setQueryData(queryKey, saved),
     onError: (error) => {
-      if (error instanceof ApiError && error.code === "CONFLICT")
-        void queryClient.invalidateQueries({ queryKey });
+      if (error instanceof ApiError && error.code === "CONFLICT") {
+        if (editingBase.current) setConflict(true);
+        else void queryClient.invalidateQueries({ queryKey });
+      }
     },
   });
   const board = draft ?? query.data;
   const editing = draft !== null;
+  const busy = mutation.isPending || query.isFetching;
   const change = async (next: Board) => {
     if (editing) setDraft(next);
     else await mutation.mutateAsync(next);
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12">
+    <div
+      className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12"
+      onClickCapture={(event) => {
+        if (!dialog && event.target instanceof Element)
+          dialogTrigger.current = event.target.closest("button");
+      }}
+    >
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-bold">바로가기</h1>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             className="h-10 px-3 sm:px-4"
             variant="outline"
-            disabled={!board || mutation.isPending}
+            disabled={!board || busy}
+            ref={fallbackFocus}
             onClick={() => setDialog({ kind: "group" })}
           >
             <FolderPlus aria-hidden /> 분류 추가
@@ -63,9 +78,11 @@ function ShortcutsPage() {
               <Button
                 className="h-10 px-3 sm:px-4"
                 variant="outline"
-                disabled={mutation.isPending}
+                disabled={busy}
                 onClick={() => {
                   setDraft(null);
+                  editingBase.current = null;
+                  setConflict(false);
                   mutation.reset();
                 }}
               >
@@ -73,19 +90,32 @@ function ShortcutsPage() {
               </Button>
               <Button
                 className="h-10 px-3 sm:px-4"
-                disabled={mutation.isPending}
+                disabled={busy}
                 onClick={async () => {
                   if (!draft) return;
                   try {
+                    if (conflict && editingBase.current) {
+                      const latest = await queryClient.fetchQuery({
+                        queryKey,
+                        queryFn: () => api.shortcuts.get(),
+                        staleTime: 0,
+                      });
+                      setDraft(reconcileShortcutBoard(editingBase.current, draft, latest));
+                      editingBase.current = structuredClone(latest);
+                      setConflict(false);
+                      mutation.reset();
+                      return;
+                    }
                     await mutation.mutateAsync(draft);
                     setDraft(null);
+                    editingBase.current = null;
                   } catch {
                     /* Keep the draft for retry. */
                   }
                 }}
               >
                 <Check aria-hidden />
-                {mutation.isPending ? "저장 중…" : "저장"}
+                {mutation.isPending ? "저장 중…" : conflict ? "최신 변경과 합치기" : "저장"}
               </Button>
             </>
           ) : (
@@ -93,9 +123,11 @@ function ShortcutsPage() {
               <Button
                 className="h-10 px-3 sm:px-4"
                 variant="outline"
-                disabled={!board || mutation.isPending}
+                disabled={!board || busy}
                 onClick={() => {
                   mutation.reset();
+                  editingBase.current = structuredClone(board!);
+                  setConflict(false);
                   setDraft(structuredClone(board!));
                 }}
               >
@@ -103,7 +135,7 @@ function ShortcutsPage() {
               </Button>
               <Button
                 className="h-10 px-3 sm:px-4"
-                disabled={!board || mutation.isPending}
+                disabled={!board || busy}
                 onClick={() => setDialog({ kind: "link" })}
               >
                 <Plus aria-hidden /> 추가
@@ -136,7 +168,9 @@ function ShortcutsPage() {
       )}
       {mutation.error && !dialog && (
         <p role="alert" className="mb-5 text-sm text-destructive">
-          {mutation.error.message}
+          {conflict
+            ? "다른 곳에서 변경됐습니다. 최신 변경과 합친 뒤 확인하고 저장하세요. 같은 항목의 같은 필드는 현재 초안을 우선합니다."
+            : mutation.error.message}
         </p>
       )}
       {board && (
@@ -153,7 +187,7 @@ function ShortcutsPage() {
           <ShortcutBoard
             board={board}
             editing={editing}
-            busy={mutation.isPending}
+            busy={busy}
             onChange={(next) => {
               void change(next).catch(() => {});
             }}
@@ -164,6 +198,11 @@ function ShortcutsPage() {
           {dialog && (
             <ShortcutDialog
               key={`${dialog.kind}-${dialog.kind === "link" ? (dialog.link?.id ?? "new") : (dialog.group?.id ?? "new")}`}
+              onRestoreFocus={() => {
+                const trigger = dialogTrigger.current;
+                if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+                else fallbackFocus.current?.focus();
+              }}
               target={dialog}
               groups={board.groups}
               onClose={() => {
