@@ -63,6 +63,19 @@ class DeploymentTest(unittest.TestCase):
                 self.assertEqual("old nginx", files[deploy.NGINX])
                 self.assertEqual("old service", files[deploy.SERVICE])
 
+    def test_first_deployment_rollback_removes_new_service_without_enabling_it(self):
+        previous = {"jar": "", "frontend": "", "service": False, "active": False, "enabled": False, "nginx_active": False}
+        with patch.object(deploy, "run", return_value="") as run, patch.object(deploy, "ready") as ready:
+            self.assertEqual([], deploy.restore(previous, "/run/myworkspace-deploy-fixture"))
+        commands = [call.args[1] for call in run.call_args_list]
+        self.assertIn(["rm", "-f", deploy.JAR_LINK], commands)
+        self.assertIn(["rm", "-f", deploy.FE_LINK], commands)
+        self.assertIn(["rm", "-f", deploy.SERVICE], commands)
+        disable = next(i for i, command in enumerate(commands) if command[0] == "sh" and "disable" in command[2])
+        self.assertLess(disable, commands.index(["rm", "-f", deploy.SERVICE]))
+        self.assertNotIn(["systemctl", "enable", "myworkspace"], commands)
+        ready.assert_not_called()
+
     def test_success_publishes_both_versions_and_cleans_staging(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

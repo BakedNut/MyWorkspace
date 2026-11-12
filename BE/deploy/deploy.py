@@ -39,12 +39,15 @@ def ready():
 def restore(previous, staging):
     """Attempt every restoration step, even if an earlier step fails."""
     commands = [["sh", "-c", f"systemctl stop myworkspace || test ! -f {SERVICE}"]]
+    if not previous["enabled"]:
+        commands.append(["sh", "-c", f"if test -f {SERVICE}; then systemctl disable myworkspace; fi"])
     for path, old in [(JAR_LINK, previous["jar"]), (FE_LINK, previous["frontend"])]:
         commands.append(["ln", "-sfn", old, path] if old else ["rm", "-f", path])
     commands.append(["cp", "-a", staging + "/nginx.before", NGINX])
     commands.append(["cp", "-a", staging + "/service.before", SERVICE] if previous["service"] else ["rm", "-f", SERVICE])
     commands.append(["systemctl", "daemon-reload"])
-    commands.append(["systemctl", "enable" if previous["enabled"] else "disable", "myworkspace"])
+    if previous["enabled"]:
+        commands.append(["systemctl", "enable", "myworkspace"])
     if previous["active"]:
         commands.append(["systemctl", "restart", "myworkspace"])
     if previous["nginx_active"]:
