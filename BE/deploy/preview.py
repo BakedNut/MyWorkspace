@@ -13,10 +13,10 @@ JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
 
 
-def ready():
+def ready(port=8081):
     for attempt in range(90):
         try:
-            response = run(200, ["curl", "--fail", "--silent", "--max-time", "1", "http://127.0.0.1:8081/api/health"])
+            response = run(200, ["curl", "--fail", "--silent", "--max-time", "1", f"http://127.0.0.1:{port}/api/health"])
             if json.loads(response).get("status") == "ok":
                 return True
         except (subprocess.CalledProcessError, ValueError):
@@ -58,7 +58,8 @@ def deploy(root=None):
     previous_frontend = run(200, ["readlink", FRONTEND]).strip()
     if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
         raise ValueError("Preview release links are not configured")
-    run(200, ["systemctl", "is-active", "myworkspace-preview", "myworkspace-preview-web"])
+    for service in ("myworkspace-preview", "myworkspace-preview-web"):
+        run(200, ["systemctl", "is-active", "--quiet", service])
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     snapshot = backup(stamp)
@@ -83,11 +84,13 @@ def deploy(root=None):
         if not ready():
             raise RuntimeError("Preview backend did not become ready")
         replace(frontend, FRONTEND, stamp)
+        if not ready(8088):
+            raise RuntimeError("Preview web endpoint did not become ready")
     except BaseException:
         replace(previous_jar, JAR, stamp + "-restore")
         replace(previous_frontend, FRONTEND, stamp + "-restore")
         run(200, ["systemctl", "restart", "myworkspace-preview"])
-        if not ready():
+        if not ready() or not ready(8088):
             raise RuntimeError("Preview rollback did not become ready; backup at " + str(snapshot))
         raise
     receipt = dict(commit=commit, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
