@@ -21,12 +21,19 @@ public class WolService {
   final JsonMapper json;
   final JdbcTemplate jdbc;
   final MagicPacketSender packets;
+  final org.springframework.transaction.support.TransactionTemplate transactions;
 
-  WolService(DocumentStore docs, JsonMapper json, JdbcTemplate jdbc, MagicPacketSender packets) {
+  WolService(
+      DocumentStore docs,
+      JsonMapper json,
+      JdbcTemplate jdbc,
+      MagicPacketSender packets,
+      org.springframework.transaction.support.TransactionTemplate transactions) {
     this.docs = docs;
     this.json = json;
     this.jdbc = jdbc;
     this.packets = packets;
+    this.transactions = transactions;
   }
 
   static String normalize(String mac) {
@@ -71,8 +78,16 @@ public class WolService {
     return saved.stream().filter(d -> d.id().equals(id)).findFirst().orElseThrow();
   }
 
-  @Transactional
+  record Reservation(WolDevice device, long at) {}
+
   Object wake(String id) {
+    // Commit before UDP. A failed or uncertain send retains the ten-second reservation.
+    var reservation = transactions.execute(tx -> reserve(id));
+    packets.send(reservation.device().mac());
+    return Map.of("sentAt", Instant.ofEpochMilli(reservation.at()).toString());
+  }
+
+  Reservation reserve(String id) {
     // Lock the list so editing a MAC cannot race with a wake request.
     var doc = docs.lock("wol");
     var device =
@@ -86,10 +101,9 @@ public class WolService {
         jdbc.query("select sent_at from wol_request where device_id=?", (r, n) -> r.getLong(1), id);
     if (!old.isEmpty() && old.getFirst() + 10_000 > now)
       throw new ApiException(429, "RATE_LIMITED", "10초 뒤 다시 시도하세요.", old.getFirst() + 10_000 - now);
-    packets.send(device.mac());
     if (old.isEmpty())
       jdbc.update("insert into wol_request(device_id,sent_at) values(?,?)", id, now);
     else jdbc.update("update wol_request set sent_at=? where device_id=?", now, id);
-    return Map.of("sentAt", Instant.ofEpochMilli(now).toString());
+    return new Reservation(device, now);
   }
 }
