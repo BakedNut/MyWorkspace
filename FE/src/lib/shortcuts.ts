@@ -126,6 +126,20 @@ export function reconcileShortcutBoard(
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
   const mergedLinks = mergeShortcutItems(links(base), links(draft), links(latest));
   const groups = mergeShortcutItems(base.groups, draft.groups, latest.groups);
+  // A concurrent move or addition must survive deletion of its destination group.
+  for (const link of mergedLinks) {
+    if (groups.some((group) => group.id === link.groupId)) continue;
+    const original = base.groups.find((group) => group.links.some((item) => item.id === link.id));
+    let destination = groups.find((group) => group.id === original?.id) ?? groups[0];
+    if (!destination) {
+      const source = [...latest.groups, ...draft.groups, ...base.groups].find(
+        (group) => group.id === link.groupId,
+      )!;
+      destination = { ...source, links: [] };
+      groups.push(destination);
+    }
+    link.groupId = destination.id;
+  }
   return {
     revision: latest.revision,
     groups: groups.map((group) => {

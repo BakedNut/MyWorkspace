@@ -106,3 +106,46 @@ describe("동시 편집 초안 조정", () => {
     expect(result.groups[0]!.name).toBe("로컬");
   });
 });
+
+it("빈 분류 삭제와 다른 탭의 이동이 겹쳐도 바로가기를 원래 분류에 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = draft.groups.filter((group) => group.id !== "b");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision = 4;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["a"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one"]);
+  expect(new Set(result.groups.flatMap((group) => group.links.map((link) => link.id))).size).toBe(
+    2,
+  );
+});
+
+it("서버에서 삭제한 분류로 초안이 이동한 바로가기는 수정된 분류와 함께 보존한다", () => {
+  const draft = moveShortcut(structuredClone(board), "one", "b");
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["a", "b"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two"]);
+  expect(result.groups[1]!.links.map((link) => link.id)).toEqual(["one"]);
+});
+
+it("모든 분류 삭제 후에도 새로 추가된 바로가기를 담을 분류를 복원한다", () => {
+  const draft = { ...board, groups: [] };
+  const latest = structuredClone(board);
+  latest.groups[1]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups).toEqual([
+    { ...board.groups[1], links: [{ id: "new", name: "새 링크", url: "https://example.com/new" }] },
+  ]);
+});
+
+it("원래 분류도 삭제됐다면 새 바로가기를 첫 번째 남은 분류로 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = [{ id: "remaining", name: "남은 분류", collapsed: false, links: [] }];
+  const latest = structuredClone(board);
+  latest.groups[1]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
+});
