@@ -52,6 +52,10 @@ export async function request<T>(
 }
 
 export const restApi: ApiClient = {
+  shortcuts: {
+    get: () => request("/shortcuts"),
+    save: (input) => request("/shortcuts", "PUT", input),
+  },
   site: {
     get: () => request("/site"),
     save: (input) => request("/site", "PUT", input),

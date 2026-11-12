@@ -1,4 +1,5 @@
 import type {
+  ShortcutBoard,
   CalendarEvent,
   CalendarInfo,
   CalendarVisibility,
@@ -25,6 +26,7 @@ import type {
 /**
  * The contract between the UI and the backend.
  * Each group maps to a Spring Boot REST controller:
+ *   shortcuts -> /api/shortcuts
  *   site      -> /api/site
  *   auth      -> /api/auth
  *   today     -> /api/today
@@ -36,6 +38,10 @@ import type {
  * `restApi` implements the live service; `mockApi` is for previews and unit tests.
  */
 export interface ApiClient {
+  shortcuts: {
+    get(): Promise<ShortcutBoard>;
+    save(input: ShortcutBoard): Promise<ShortcutBoard>;
+  };
   site: {
     get(): Promise<SiteSettings>;
     save(input: SiteSettings): Promise<SiteSettings>;
