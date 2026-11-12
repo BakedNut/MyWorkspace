@@ -39,8 +39,8 @@ def configure():
     sensor = Path("/usr/local/libexec/myworkspace-sensors")
     sensor.parent.mkdir(parents=True, exist_ok=True)
     sensor.write_text(Path(__file__).with_name("sensors.py").read_text());sensor.chmod(0o755)
-    run(200, ["sh", "-c", "test -f /var/lib/myworkspace/sensor-key || ssh-keygen -q -t ed25519 -N '' -f /var/lib/myworkspace/sensor-key"])
-    public = run(200, ["cat", "/var/lib/myworkspace/sensor-key.pub"]).strip()
+    from sensor_key import public_key
+    public = public_key(run(200, ["python3", "-c", Path(__file__).with_name("sensor_key.py").read_text()]).rstrip("\n"))
     ssh = Path(account.pw_dir) / ".ssh";ssh.mkdir(exist_ok=True, mode=0o700)
     authorized = ssh / "authorized_keys"
     authorized.write_text('from="192.168.1.200",restrict,command="/usr/local/libexec/myworkspace-sensors" ' + public + "\n")
@@ -48,10 +48,9 @@ def configure():
     for path in [ssh, authorized]:os.chown(path, account.pw_uid, account.pw_gid)
     hostkey = Path("/etc/ssh/ssh_host_ed25519_key.pub").read_text().split()
     private_file(200, "/etc/myworkspace/sensor-known-hosts", "192.168.1.110 " + " ".join(hostkey[:2]) + "\n", 0o644)
-    run(200, ["chown", "myworkspace:myworkspace", "/var/lib/myworkspace/sensor-key", "/var/lib/myworkspace/sensor-key.pub"])
-    if "SENSOR_KEY=" not in config:config += "SENSOR_KEY=/var/lib/myworkspace/sensor-key\n"
+    config = "\n".join(line for line in config.splitlines() if not line.startswith("SENSOR_KEY=")) + "\nSENSOR_KEY=/etc/myworkspace/sensors/key\n"
     private_file(200, "/etc/myworkspace/application.env", config)
-    result = run(200, ["runuser", "-u", "myworkspace", "--", "ssh", "-i", "/var/lib/myworkspace/sensor-key", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=/etc/myworkspace/sensor-known-hosts", "myworkspace-sensors@192.168.1.110"])
+    result = run(200, ["runuser", "-u", "myworkspace", "--", "ssh", "-F", "/dev/null", "-i", "/etc/myworkspace/sensors/key", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=/etc/myworkspace/sensor-known-hosts", "myworkspace-sensors@192.168.1.110"])
     assert "netin" in json.loads(result)
     print("Read-only monitoring and certificate verification configured; sensor access verified.")
 
