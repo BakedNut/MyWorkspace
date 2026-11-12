@@ -48,7 +48,7 @@ class MySqlIntegrationTest {
 
   @Test
   void migrationsAndConcurrentCalendarAndWolRequestsUseRealMysqlLocks() throws Exception {
-    assertThat(flyway.info().applied()).hasSize(8);
+    assertThat(flyway.info().applied()).hasSize(9);
     var date = LocalDate.of(2026, 11, 12);
     var input = new EventInput("cal-icloud", "original", date, true, null, null, null, null);
     var created =
@@ -131,6 +131,36 @@ class MySqlIntegrationTest {
     mvc.perform(get("/api/shortcuts").header(SecurityConfig.CLIENT_HEADER, LAN))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.revision").value(revision + 1));
+  }
+
+  @Test
+  void cachedIconBytesAreReadFromRealMysqlWithoutFetchingTheSite() throws Exception {
+    var response =
+        mvc.perform(get("/api/shortcuts").header(SecurityConfig.CLIENT_HEADER, LAN))
+            .andExpect(status().isOk())
+            .andReturn();
+    long revision =
+        json.readTree(response.getResponse().getContentAsString()).path("revision").asLong();
+    assertThat(saveShortcuts(revision, "icon fixture")).isEqualTo(200);
+    String key =
+        java.util.HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(
+                        "https://example.com/".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    byte[] bytes = {7, 8, 9};
+    jdbc.update(
+        "insert into shortcut_icon(site_key,media_type,image_bytes,checked_at) values(?,?,?,?)",
+        key,
+        "image/png",
+        bytes,
+        System.currentTimeMillis());
+    var image =
+        mvc.perform(
+                get("/api/shortcuts/icons/mysql-link").header(SecurityConfig.CLIENT_HEADER, LAN))
+            .andReturn();
+    image.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(image)).andExpect(status().isOk()).andExpect(content().bytes(bytes));
   }
 
   int saveShortcuts(long revision, String name) throws Exception {

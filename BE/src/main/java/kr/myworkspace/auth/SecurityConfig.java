@@ -101,6 +101,11 @@ public class SecurityConfig {
         .addFilterBefore(
             new OncePerRequestFilter() {
               @Override
+              protected boolean shouldNotFilterAsyncDispatch() {
+                return false;
+              }
+
+              @Override
               protected void doFilterInternal(
                   HttpServletRequest req, HttpServletResponse res, FilterChain chain)
                   throws ServletException, IOException {

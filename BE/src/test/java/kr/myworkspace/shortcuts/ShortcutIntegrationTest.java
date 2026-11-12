@@ -1,10 +1,12 @@
 package kr.myworkspace.shortcuts;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import java.net.URI;
 import java.util.List;
 import kr.myworkspace.calendar.holiday.HolidayService;
 import kr.myworkspace.common.document.DocumentStore;
@@ -15,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -31,6 +34,8 @@ class ShortcutIntegrationTest {
   @Autowired MockMvc mvc;
   @Autowired DocumentStore docs;
   @Autowired JsonMapper json;
+  @Autowired JdbcTemplate jdbc;
+  @MockitoBean ShortcutIconFetcher fetcher;
   @MockitoBean MonitoringService monitor;
   @MockitoBean HolidayService holidays;
   final RequestPostProcessor trusted =
@@ -51,6 +56,7 @@ class ShortcutIntegrationTest {
   @BeforeEach
   void reset() {
     docs.save("shortcuts", new ShortcutBoard(0, List.of()));
+    jdbc.update("delete from shortcut_icon");
   }
 
   ShortcutBoard board(String url) {
@@ -142,5 +148,95 @@ class ShortcutIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(board("https://example.com"))))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void storesIconsForAnOriginAndServesThemFromTheDatabase() throws Exception {
+    docs.save("shortcuts", board("https://example.com/page?private=query"));
+    byte[] bytes = {1, 2, 3};
+    when(fetcher.fetch(URI.create("https://example.com/")))
+        .thenReturn(new ShortcutIcon("image/png", bytes));
+    var first =
+        mvc.perform(get("/api/shortcuts/icons/portal").with(trusted))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+    first.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(first))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType("image/png"))
+        .andExpect(content().bytes(bytes))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Security-Policy", org.hamcrest.Matchers.containsString("sandbox")));
+    assertThat(jdbc.queryForObject("select count(*) from shortcut_icon", Integer.class))
+        .isEqualTo(1);
+    org.mockito.Mockito.reset(fetcher);
+    var second = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+    second.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(second)).andExpect(status().isOk()).andExpect(content().bytes(bytes));
+    verifyNoInteractions(fetcher);
+  }
+
+  @Test
+  void cachesMissingIconsAndProtectsIconRequests() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    for (int i = 0; i < 2; i++) {
+      var request = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+      request.getAsyncResult(5000);
+      mvc.perform(asyncDispatch(request)).andExpect(status().isNoContent());
+    }
+    verify(fetcher, times(1)).fetch(URI.create("https://example.com/"));
+    mvc.perform(get("/api/shortcuts/icons/portal")).andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/shortcuts/icons/missing").with(trusted)).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void passwordSessionsCanAlsoLoadIconsThroughAsyncDispatch() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    when(fetcher.fetch(URI.create("https://example.com/")))
+        .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+    var login =
+        mvc.perform(
+                post("/api/auth/login")
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"password\":\"shortcut-test-only\"}"))
+            .andExpect(status().isOk())
+            .andReturn();
+    var session =
+        (org.springframework.mock.web.MockHttpSession) login.getRequest().getSession(false);
+    var image = mvc.perform(get("/api/shortcuts/icons/portal").session(session)).andReturn();
+    image.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(image)).andExpect(status().isOk());
+  }
+
+  @Test
+  void aDraftUrlCannotCacheTheOldSitesIconUnderTheNewSite() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    var draft =
+        mvc.perform(
+                get("/api/shortcuts/icons/portal").param("site", "https://react.dev").with(trusted))
+            .andReturn();
+    draft.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(draft)).andExpect(status().isNoContent());
+    verifyNoInteractions(fetcher);
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(board("https://react.dev/"))))
+        .andExpect(status().isOk());
+    when(fetcher.fetch(URI.create("https://react.dev/")))
+        .thenReturn(new ShortcutIcon("image/png", new byte[] {9}));
+    var saved =
+        mvc.perform(
+                get("/api/shortcuts/icons/portal").param("site", "https://react.dev").with(trusted))
+            .andReturn();
+    saved.getAsyncResult(5000);
+    mvc.perform(asyncDispatch(saved))
+        .andExpect(status().isOk())
+        .andExpect(content().bytes(new byte[] {9}));
   }
 }
