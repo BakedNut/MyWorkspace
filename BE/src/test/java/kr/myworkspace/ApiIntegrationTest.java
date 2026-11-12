@@ -10,10 +10,10 @@ import java.util.List;
 import java.util.Map;
 import kr.myworkspace.auth.SecurityConfig;
 import kr.myworkspace.calendar.CalendarVisibility;
-import kr.myworkspace.calendar.Course;
-import kr.myworkspace.calendar.CourseTime;
-import kr.myworkspace.calendar.HolidayService;
-import kr.myworkspace.calendar.Timetable;
+import kr.myworkspace.calendar.holiday.HolidayService;
+import kr.myworkspace.calendar.timetable.Course;
+import kr.myworkspace.calendar.timetable.CourseTime;
+import kr.myworkspace.calendar.timetable.Timetable;
 import kr.myworkspace.common.document.DocumentStore;
 import kr.myworkspace.server.MonitoringService;
 import kr.myworkspace.settings.SiteName;
@@ -52,31 +52,60 @@ class ApiIntegrationTest {
     mvc.perform(get("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN))
         .andExpect(content().json("{\"hiddenCalendarIds\":[]}"));
     String input = "{\"hiddenCalendarIds\":[\"__school\",\"cal-remote\"]}";
-    mvc.perform(put("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, EXT).with(csrf())
-            .contentType("application/json").content(input))
+    mvc.perform(
+            put("/api/calendar/visibility")
+                .header(SecurityConfig.CLIENT_HEADER, EXT)
+                .with(csrf())
+                .contentType("application/json")
+                .content(input))
         .andExpect(status().isUnauthorized());
-    mvc.perform(put("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN)
-            .contentType("application/json").content(input))
+    mvc.perform(
+            put("/api/calendar/visibility")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .contentType("application/json")
+                .content(input))
         .andExpect(status().isForbidden());
-    for (String invalid : List.of("{}", "{\"hiddenCalendarIds\":null}",
-        "{\"hiddenCalendarIds\":[\"\"]}",
-        json.writeValueAsString(Map.of("hiddenCalendarIds", List.of("x".repeat(65)))),
-        json.writeValueAsString(Map.of("hiddenCalendarIds",
-            java.util.stream.IntStream.range(0, 101).mapToObj(i -> "cal-" + i).toList())))) {
-      mvc.perform(put("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf())
-              .contentType("application/json").content(invalid))
+    for (String invalid :
+        List.of(
+            "{}",
+            "{\"hiddenCalendarIds\":null}",
+            "{\"hiddenCalendarIds\":[\"\"]}",
+            json.writeValueAsString(Map.of("hiddenCalendarIds", List.of("x".repeat(65)))),
+            json.writeValueAsString(
+                Map.of(
+                    "hiddenCalendarIds",
+                    java.util.stream.IntStream.range(0, 101)
+                        .mapToObj(i -> "cal-" + i)
+                        .toList())))) {
+      mvc.perform(
+              put("/api/calendar/visibility")
+                  .header(SecurityConfig.CLIENT_HEADER, LAN)
+                  .with(csrf())
+                  .contentType("application/json")
+                  .content(invalid))
           .andExpect(status().isBadRequest());
     }
-    assertThat(docs.read("calendar-visibility", CalendarVisibility.class).hiddenCalendarIds()).isEmpty();
-    mvc.perform(put("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf())
-            .contentType("application/json").content(input))
-        .andExpect(status().isOk()).andExpect(content().json(input));
+    assertThat(docs.read("calendar-visibility", CalendarVisibility.class).hiddenCalendarIds())
+        .isEmpty();
+    mvc.perform(
+            put("/api/calendar/visibility")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content(input))
+        .andExpect(status().isOk())
+        .andExpect(content().json(input));
     assertThat(docs.read("calendar-visibility", CalendarVisibility.class).hiddenCalendarIds())
         .containsExactlyInAnyOrder("__school", "cal-remote");
     mvc.perform(get("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN))
-        .andExpect(status().isOk()).andExpect(content().json(input));
-    mvc.perform(put("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf())
-            .contentType("application/json").content("{\"hiddenCalendarIds\":[]}"))
+        .andExpect(status().isOk())
+        .andExpect(content().json(input));
+    mvc.perform(
+            put("/api/calendar/visibility")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content("{\"hiddenCalendarIds\":[]}"))
         .andExpect(status().isOk());
     mvc.perform(get("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, LAN))
         .andExpect(content().json("{\"hiddenCalendarIds\":[]}"));
@@ -159,20 +188,35 @@ class ApiIntegrationTest {
     mvc.perform(get("/api/site").header(SecurityConfig.CLIENT_HEADER, EXT))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.siteName").value("MyWorkspace"));
-    mvc.perform(put("/api/site").header(SecurityConfig.CLIENT_HEADER, EXT).with(csrf())
-            .contentType("application/json").content("{\"siteName\":\"외부 수정\"}"))
+    mvc.perform(
+            put("/api/site")
+                .header(SecurityConfig.CLIENT_HEADER, EXT)
+                .with(csrf())
+                .contentType("application/json")
+                .content("{\"siteName\":\"외부 수정\"}"))
         .andExpect(status().isUnauthorized());
-    mvc.perform(put("/api/site").header(SecurityConfig.CLIENT_HEADER, LAN)
-            .contentType("application/json").content("{\"siteName\":\"CSRF 확인\"}"))
+    mvc.perform(
+            put("/api/site")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .contentType("application/json")
+                .content("{\"siteName\":\"CSRF 확인\"}"))
         .andExpect(status().isForbidden());
     for (String name : List.of("", "   ", "x".repeat(41), "줄\n바꿈")) {
-      mvc.perform(put("/api/site").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf())
-              .contentType("application/json").content(json.writeValueAsString(Map.of("siteName", name))))
+      mvc.perform(
+              put("/api/site")
+                  .header(SecurityConfig.CLIENT_HEADER, LAN)
+                  .with(csrf())
+                  .contentType("application/json")
+                  .content(json.writeValueAsString(Map.of("siteName", name))))
           .andExpect(status().isBadRequest());
     }
     assertThat(docs.read("site-settings", SiteName.class).siteName()).isEqualTo("MyWorkspace");
-    mvc.perform(put("/api/site").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf())
-            .contentType("application/json").content("{\"siteName\":\"  나의 공간  \"}"))
+    mvc.perform(
+            put("/api/site")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf())
+                .contentType("application/json")
+                .content("{\"siteName\":\"  나의 공간  \"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.siteName").value("나의 공간"));
     assertThat(docs.read("site-settings", SiteName.class).siteName()).isEqualTo("나의 공간");
@@ -220,7 +264,8 @@ class ApiIntegrationTest {
 
   @Test
   void realCsrfLoginRotatesSessionAndLogoutRevokesIt() throws Exception {
-    var token = mvc.perform(get("/api/auth/csrf").header(SecurityConfig.CLIENT_HEADER, EXT)).andReturn();
+    var token =
+        mvc.perform(get("/api/auth/csrf").header(SecurityConfig.CLIENT_HEADER, EXT)).andReturn();
     var session = (MockHttpSession) token.getRequest().getSession();
     String old = session.getId();
     var csrf = json.readTree(token.getResponse().getContentAsString());
@@ -299,7 +344,14 @@ class ApiIntegrationTest {
                 .content(event.replace("10:00", "08:00")))
         .andExpect(status().isBadRequest());
     mvc.perform(
-            delete("/api/calendar/events/" + id).header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf()))
+            delete("/api/calendar/events/" + id)
+                .header(
+                    "If-Match",
+                    json.readTree(created.getResponse().getContentAsString())
+                        .path("revision")
+                        .asText())
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf()))
         .andExpect(status().isOk());
     mvc.perform(
             get("/api/calendar/events?from=2026-11-06&to=2028-01-01")
@@ -311,13 +363,17 @@ class ApiIntegrationTest {
   void wolUsesSavedMacAndCooldownSurvivesASecondRequest() throws Exception {
     wol.save(List.of(new WolDevice("test-pc", "테스트 PC", "02-12-34-56-78-9a")));
     mvc.perform(
-            post("/api/wol/devices/test-pc/wake").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf()))
+            post("/api/wol/devices/test-pc/wake")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf()))
         .andExpect(status().isOk());
     verify(packets).send("02:12:34:56:78:9A");
     mvc.perform(get("/api/wol/devices/test-pc/boot").header(SecurityConfig.CLIENT_HEADER, LAN))
         .andExpect(status().isNotFound());
     mvc.perform(
-            post("/api/wol/devices/test-pc/wake").header(SecurityConfig.CLIENT_HEADER, LAN).with(csrf()))
+            post("/api/wol/devices/test-pc/wake")
+                .header(SecurityConfig.CLIENT_HEADER, LAN)
+                .with(csrf()))
         .andExpect(status().isTooManyRequests());
     mvc.perform(
             put("/api/wol/devices")
@@ -329,7 +385,6 @@ class ApiIntegrationTest {
         .andExpect(status().isBadRequest());
     assertThat(wol.list()).hasSize(1);
     assertThat(wol.list().getFirst().id()).isEqualTo("test-pc");
-
   }
 
   @Test
