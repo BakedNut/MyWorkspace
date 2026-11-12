@@ -53,6 +53,8 @@ export async function request<T>(
 
 export const restApi: ApiClient = {
   shortcuts: {
+    iconUrl: (link) =>
+      `/api/shortcuts/icons/${encodeURIComponent(link.id)}?site=${encodeURIComponent(new URL(link.url).origin)}`,
     get: () => request("/shortcuts"),
     save: (input) => request("/shortcuts", "PUT", input),
   },

@@ -1,5 +1,6 @@
 import type {
   ShortcutBoard,
+  ShortcutLink,
   CalendarEvent,
   CalendarInfo,
   CalendarVisibility,
@@ -40,6 +41,7 @@ import type {
 export interface ApiClient {
   shortcuts: {
     get(): Promise<ShortcutBoard>;
+    iconUrl(link: ShortcutLink): string | null;
     save(input: ShortcutBoard): Promise<ShortcutBoard>;
   };
   site: {

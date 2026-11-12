@@ -83,6 +83,7 @@ let hiddenCalendarIds: string[] = [];
 
 export const mockApi: ApiClient = {
   shortcuts: {
+    iconUrl: () => null,
     async get() {
       return structuredClone(
         load<ShortcutBoard>("shortcuts", () => ({

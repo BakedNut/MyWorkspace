@@ -19,17 +19,10 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  ChevronDown,
-  ExternalLink,
-  Folder,
-  GripVertical,
-  Link2,
-  Pencil,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, ExternalLink, Folder, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { ShortcutIcon } from "@/components/ShortcutIcon";
 import { moveShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import type { ShortcutBoard as Board, ShortcutGroup, ShortcutLink } from "@/types/domain";
@@ -320,9 +313,7 @@ function LinkCard({
   });
   const content = (
     <>
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-        <Link2 aria-hidden className="size-5" />
-      </span>
+      <ShortcutIcon key={link.url} link={link} />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{link.name}</span>
         <span className="mt-1 block truncate text-xs text-muted-foreground">
