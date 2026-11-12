@@ -30,3 +30,7 @@ Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
 ## 캘린더 표시 설정
 
 인증된 `GET /api/calendar/visibility`와 CSRF가 필요한 `PUT /api/calendar/visibility`로 `hiddenCalendarIds`를 조회·저장합니다. 학교 시간표는 `__school`, iCloud는 각 캘린더 ID를 사용하며 MySQL의 별도 문서에 저장합니다. 초기값은 전체 표시입니다. 일정·시간표 원본은 변경하지 않습니다.
+
+## MySQL 통합 테스트
+
+기본 테스트는 H2에서 실행합니다. CI의 별도 mysql 작업은 MySQL 8.4 서비스에서 V1~V7 마이그레이션과 로컬 일정 revision/동시 갱신·삭제, WOL 잠금/예약, iCloud 캐시 날짜/읽기전용 메타데이터, 메트릭 SQL 집계를 검증합니다. `MYSQL_TEST_URL`, `MYSQL_TEST_USERNAME`, `MYSQL_TEST_PASSWORD`로 비어 있는 테스트 전용 DB를 지정하고 `./mvnw -Dtest=MySqlIntegrationTest verify`로 같은 검증을 실행할 수 있습니다. 배포 스크립트 테스트는 CI에서 별도로 실행합니다.
