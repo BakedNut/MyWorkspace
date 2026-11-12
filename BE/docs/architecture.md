@@ -16,19 +16,12 @@ kr.myworkspace
 │   ├── CredentialService.java
 │   ├── SecurityState.java
 │   └── Totp.java
-├── calendar/                         # 일정, 시간표, 공휴일, iCloud
-│   ├── ScheduleController.java
-│   ├── ScheduleService.java
-│   ├── CalendarPreferencesController.java
-│   ├── CalendarVisibility.java
-│   ├── EventRepository.java
-│   ├── StoredEvent.java
-│   ├── CalendarInfo.java / EventInput.java
-│   ├── Timetable.java / Course.java / CourseTime.java
-│   ├── HolidayService.java
-│   ├── ICloudController.java / ICloudService.java
-│   ├── CalDavClient.java / ICalendarMapper.java
-│   └── CloudAccount.java / CloudCalendar.java / CloudResource.java / …
+├── calendar/
+│   ├── event/                        # 일정 API·통합 조회·로컬 JPA 저장/버전 검증
+│   ├── timetable/                    # 학기·수업·시간대와 겹침 검증
+│   ├── holiday/                      # 저장 데이터 조회와 별도 공휴일 갱신
+│   ├── icloud/                       # 연결·동기화 서비스, CalDAV/변환, 캐시 Repository
+│   └── CalendarPreferencesController.java / CalendarVisibility.java
 ├── server/                           # Proxmox 상태 수집과 그래프 기록
 │   ├── MonitoringController.java
 │   └── MonitoringService.java
@@ -47,7 +40,7 @@ kr.myworkspace
     └── web/                          # HealthController
 ```
 
-일정과 시간표는 날짜별 일정 조회를 함께 구성하므로 `calendar`에 모읍니다. 비밀번호 설정은 인증 규칙·세션·OTP와 함께 바뀌므로 `settings` 대신 `auth`에 둡니다.
+캘린더는 `event`, `timetable`, `holiday`, `icloud` 하위 기능으로 구분합니다. 통합 조회는 `event.ScheduleService`에서 공개 서비스 계약을 조합합니다. 각 하위 기능 안에서는 Controller·Service·Repository·Entity·DTO 이름으로 역할을 구분합니다. 비밀번호 설정은 인증 규칙·세션·OTP와 함께 바뀌므로 `settings` 대신 `auth`에 둡니다.
 
 ## 클래스 역할과 호출 방향
 
@@ -60,7 +53,7 @@ kr.myworkspace
 | 데이터 record | API 입력·출력과 저장 상태 | `EventInput`, `Course`, `SiteName`, `SecurityState` |
 | 연동·변환 | 외부 통신과 프로토콜 변환 | `CalDavClient`, `ICalendarMapper`, `MagicPacketSender` |
 
-기본 흐름은 **Controller → Service → Repository 또는 외부 연동 클래스**입니다. 값 하나를 저장하는 사이트 이름·표시 선택 API는 Controller에서 `DocumentStore`를 사용합니다. 별도 서비스가 필요한 독립 규칙이 생겼을 때 분리합니다. 기존 모니터링·iCloud의 직접 SQL은 해당 기능의 서비스에 유지합니다.
+기본 흐름은 **Controller → Service → Repository 또는 외부 연동 클래스**입니다. 값 하나를 저장하는 사이트 이름·표시 선택 API는 Controller에서 `DocumentStore`를 사용합니다. 별도 서비스가 필요한 독립 규칙이 생겼을 때 분리합니다. iCloud SQL과 캐시 보관은 `ICloudCacheRepository`가 담당합니다. `ICloudService`는 연결과 원격 작업을 조정합니다.
 
 패키지 내부는 파일 이름으로 계층을 구분합니다. 작은 기능에 `controller/service/repository/dto/entity` 하위 폴더를 모두 만들지 않습니다. 하나의 기능이 더 커져 내부 경계를 나눌 필요가 생기면 그 기능 안에서만 하위 패키지를 추가합니다.
 
@@ -76,7 +69,11 @@ kr.myworkspace
 
 ## 구조 정리의 호환성
 
-API 주소·JSON 필드·검증 규칙·DB 테이블·Flyway 마이그레이션·암호화 형식과 환경 설정 키를 유지합니다. 프론트엔드 변경이나 데이터 이관은 필요하지 않습니다.
+기존 API 경로와 암호화 형식을 유지합니다. 로컬 일정은 V7 마이그레이션으로 version을 추가하고 조회·저장 응답의 revision을 수정/삭제 요청에 사용합니다. 이전 데이터는 revision 0에서 시작합니다.
+
+외부 CalDAV 통신은 로컬 DB 트랜잭션과 서비스 상태 잠금 밖에서 실행합니다. 조회는 기존 캐시를 반환하고 누락/만료 범위는 전용 작업자가 갱신합니다. 연결 세대와 캐시 변경 세대를 확인해 늦게 도착한 응답이 연결 해제·다른 연결·수정 결과를 덮어쓰지 않도록 합니다. 원격 변경 성공 후 캐시 저장이 실패하면 원격 성공을 반환하고 재동기화 대상으로 기록합니다. 로그에 캐시 실패를 남기며 다음 조회/주기 갱신에서 복구합니다.
+
+공휴일 조회는 저장 데이터만 사용합니다. 누락 연도는 갱신 대상으로 등록하고 1분 주기 작업에서 가져오며, 성공한 데이터는 24시간 보관하고 실패 재시도에는 1분 간격을 적용합니다.
 
 빌드는 과거 패키지의 클래스가 남아 문제를 가리지 않도록 다음과 같이 확인합니다.
 

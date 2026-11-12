@@ -13,7 +13,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import kr.myworkspace.calendar.HolidayService;
+import kr.myworkspace.calendar.holiday.HolidayService;
 import kr.myworkspace.common.document.DocumentStore;
 import kr.myworkspace.server.MonitoringService;
 import org.junit.jupiter.api.Test;
