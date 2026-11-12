@@ -63,7 +63,36 @@ class PreviewDeploymentTest(unittest.TestCase):
             preview.deploy(self.root)
         self.assert_restored()
         self.assertEqual([call.args for call in self.ready.call_args_list],
-                         [(), (8088,), (), (8088,)])
+                         [(), (8088,), (8081,), (8088,)])
+
+    def test_frontend_switch_and_restore_failure_still_restarts_the_old_backend(self):
+        def run(ct, args, data=None):
+            if args[0] == "ln" and args[-1].startswith(preview.FRONTEND + "."):
+                raise PermissionError("frontend directory is read only")
+            return self.server_run(ct, args, data)
+        self.run.side_effect = run
+        with self.assertRaisesRegex(RuntimeError, "rollback incomplete") as failure:
+            preview.deploy(self.root)
+        self.assertIsInstance(failure.exception.__cause__, PermissionError)
+        commands = [call.args[1] for call in self.run.call_args_list]
+        restore_jar = next(index for index, args in enumerate(commands)
+                           if args[:3] == ["ln", "-s", self.old_jar])
+        self.assertIn(["systemctl", "restart", "myworkspace-preview"], commands[restore_jar + 1:])
+        self.assertEqual([call.args for call in self.ready.call_args_list], [(), (8081,), (8088,)])
+        self.private.assert_not_called()
+
+    def test_each_rollback_step_is_attempted_and_failures_are_reported(self):
+        def run(ct, args, data=None):
+            if args[0] == "ln" or args[:2] == ["systemctl", "restart"]:
+                raise PermissionError("injected rollback failure")
+            return ""
+        self.run.side_effect = run
+        self.ready.side_effect = [RuntimeError("readiness failed"), False]
+        failures = preview.restore(self.old_jar, self.old_frontend, "stamp")
+        self.assertEqual(len(failures), 5)
+        self.run.assert_any_call(200, ["ln", "-s", self.old_frontend, preview.FRONTEND + ".stamp-restore"])
+        self.run.assert_any_call(200, ["systemctl", "restart", "myworkspace-preview"])
+        self.assertEqual([call.args for call in self.ready.call_args_list], [(8081,), (8088,)])
 
     def test_either_stopped_service_aborts_before_backup_or_upload(self):
         for stopped in ("myworkspace-preview", "myworkspace-preview-web"):

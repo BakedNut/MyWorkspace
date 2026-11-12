@@ -48,6 +48,26 @@ def replace(target, link, stamp):
     run(200, ["mv", "-Tf", temporary, link])
 
 
+def restore(previous_jar, previous_frontend, stamp):
+    failures = []
+    for target, path in ((previous_jar, JAR), (previous_frontend, FRONTEND)):
+        try:
+            replace(target, path, stamp + "-restore")
+        except Exception as error:
+            failures.append(f"{path}: {type(error).__name__}")
+    try:
+        run(200, ["systemctl", "restart", "myworkspace-preview"])
+    except Exception as error:
+        failures.append(f"backend restart: {type(error).__name__}")
+    for port in (8081, 8088):
+        try:
+            if not ready(port):
+                failures.append(f"port {port} readiness")
+        except Exception as error:
+            failures.append(f"port {port}: {type(error).__name__}")
+    return failures
+
+
 def deploy(root=None):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
     jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
@@ -86,12 +106,10 @@ def deploy(root=None):
         replace(frontend, FRONTEND, stamp)
         if not ready(8088):
             raise RuntimeError("Preview web endpoint did not become ready")
-    except BaseException:
-        replace(previous_jar, JAR, stamp + "-restore")
-        replace(previous_frontend, FRONTEND, stamp + "-restore")
-        run(200, ["systemctl", "restart", "myworkspace-preview"])
-        if not ready() or not ready(8088):
-            raise RuntimeError("Preview rollback did not become ready; backup at " + str(snapshot))
+    except BaseException as error:
+        failures = restore(previous_jar, previous_frontend, stamp)
+        if failures:
+            raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise
     receipt = dict(commit=commit, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
     private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
