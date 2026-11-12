@@ -84,6 +84,8 @@ public class MonitoringService {
       Process process =
           new ProcessBuilder(
                   "/usr/bin/ssh",
+                  "-F",
+                  "/dev/null",
                   "-i",
                   sensorKey,
                   "-o",
