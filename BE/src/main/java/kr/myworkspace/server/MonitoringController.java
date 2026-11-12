@@ -15,12 +15,12 @@ class MonitoringController {
   }
 
   @GetMapping("/status")
-  Object status() {
+  ServerStatusResponse status() {
     return monitor.status();
   }
 
   @GetMapping("/history")
-  Object history(@RequestParam String range) {
+  MetricHistoryResponse history(@RequestParam String range) {
     return monitor.history(range);
   }
 }

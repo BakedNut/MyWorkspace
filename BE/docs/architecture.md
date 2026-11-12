@@ -24,7 +24,10 @@ kr.myworkspace
 │   └── CalendarPreferencesController.java / CalendarVisibility.java
 ├── server/                           # Proxmox 상태 수집과 그래프 기록
 │   ├── MonitoringController.java
-│   └── MonitoringService.java
+│   ├── MonitoringService.java          # 실시간 스냅샷 조합과 수집 흐름
+│   ├── ProxmoxClient.java / SensorClient.java
+│   ├── MetricRepository.java           # 이력 저장·집계·보존
+│   └── ServerStatusResponse.java / MetricHistoryResponse.java
 ├── wol/                              # PC 목록과 깨우기
 │   ├── WolController.java
 │   ├── WolService.java
@@ -82,3 +85,5 @@ kr.myworkspace
 ```
 
 기존 테스트를 새 위치에서 실행하고, 분리한 패킷 단위 테스트와 공통 상태 확인 API도 검증합니다. 실제 Apple 계정·Proxmox·PC 연동과 운영 배포는 별도 범위입니다.
+
+모니터링 수집은 실시간 스냅샷을 먼저 발행하고 이력을 별도 실패 영역에서 저장합니다. DB 기록 실패는 로그와 historyFailed 상태로 남기고 정상 수집한 실시간 조회를 유지합니다. 수집 API 자체가 실패한 경우는 기존대로 조회 오류로 표시합니다. API 응답은 Java record로 필드·숫자·null 계약을 정의합니다.
