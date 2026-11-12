@@ -198,4 +198,15 @@ class ICalendarMapper {
     event.add(new Sequence(sequence + 1));
     return calendar.toString();
   }
+
+  static List<Map<String, Object>> expandResources(
+      List<CloudResource> resources, LocalDate from, LocalDate to, boolean readOnly) {
+    List<Map<String, Object>> events = new ArrayList<>();
+    for (var r : resources) {
+      events.addAll(ICalendarMapper.expand(r, from, to, readOnly));
+      if (events.size() > 5000)
+        throw new ApiException(400, "VALIDATION", "조회한 일정이 너무 많습니다. 기간을 줄여주세요.");
+    }
+    return events;
+  }
 }

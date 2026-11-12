@@ -20,7 +20,12 @@ kr.myworkspace
 │   ├── event/                        # 일정 API·통합 조회·로컬 JPA 저장/버전 검증
 │   ├── timetable/                    # 학기·수업·시간대와 겹침 검증
 │   ├── holiday/                      # 저장 데이터 조회와 별도 공휴일 갱신
-│   ├── icloud/                       # 연결·동기화 서비스, CalDAV/변환, 캐시 Repository
+│   ├── icloud/                       # 공개 Facade와 연결·동기화·이벤트 변경 서비스
+│   │   ├── ICloudCoordinator.java    # 연결/캐시 세대와 공통 상태 잠금
+│   │   ├── ICloudConnectionService.java
+│   │   ├── ICloudSyncService.java
+│   │   ├── ICloudEventService.java
+│   │   └── ICloudCacheRepository.java
 │   └── CalendarPreferencesController.java / CalendarVisibility.java
 ├── server/                           # Proxmox 상태 수집과 그래프 기록
 │   ├── MonitoringController.java
@@ -56,7 +61,7 @@ kr.myworkspace
 | 데이터 record | API 입력·출력과 저장 상태 | `EventInput`, `Course`, `SiteName`, `SecurityState` |
 | 연동·변환 | 외부 통신과 프로토콜 변환 | `CalDavClient`, `ICalendarMapper`, `MagicPacketSender` |
 
-기본 흐름은 **Controller → Service → Repository 또는 외부 연동 클래스**입니다. 값 하나를 저장하는 사이트 이름·표시 선택 API는 Controller에서 `DocumentStore`를 사용합니다. 별도 서비스가 필요한 독립 규칙이 생겼을 때 분리합니다. iCloud SQL과 캐시 보관은 `ICloudCacheRepository`가 담당합니다. `ICloudService`는 연결과 원격 작업을 조정합니다.
+기본 흐름은 **Controller → Service → Repository 또는 외부 연동 클래스**입니다. 값 하나를 저장하는 사이트 이름·표시 선택 API는 Controller에서 `DocumentStore`를 사용합니다. 별도 서비스가 필요한 독립 규칙이 생겼을 때 분리합니다. iCloud SQL과 캐시 보관은 `ICloudCacheRepository`가 담당합니다. `ICloudService`는 다른 하위 기능과 Controller가 사용하는 Facade입니다. 연결·동기화·이벤트 변경은 각각 별도 서비스에서 담당하며 `ICloudCoordinator`가 공통 상태 잠금과 연결/캐시 세대를 소유합니다.
 
 패키지 내부는 파일 이름으로 계층을 구분합니다. 작은 기능에 `controller/service/repository/dto/entity` 하위 폴더를 모두 만들지 않습니다. 하나의 기능이 더 커져 내부 경계를 나눌 필요가 생기면 그 기능 안에서만 하위 패키지를 추가합니다.
 
@@ -87,3 +92,9 @@ kr.myworkspace
 기존 테스트를 새 위치에서 실행하고, 분리한 패킷 단위 테스트와 공통 상태 확인 API도 검증합니다. 실제 Apple 계정·Proxmox·PC 연동과 운영 배포는 별도 범위입니다.
 
 모니터링 수집은 실시간 스냅샷을 먼저 발행하고 이력을 별도 실패 영역에서 저장합니다. DB 기록 실패는 로그와 historyFailed 상태로 남기고 정상 수집한 실시간 조회를 유지합니다. 수집 API 자체가 실패한 경우는 기존대로 조회 오류로 표시합니다. API 응답은 Java record로 필드·숫자·null 계약을 정의합니다.
+
+### iCloud 캐시와 수동 동기화 계약
+
+원격 저장·삭제 후 범위 캐시를 지우지 않고 해당 리소스의 일정만 부분 반영합니다. 기존 캐시는 만료 상태로 표시하고 새 CalDAV 응답이 완료될 때 교체합니다. 목록의 데이터와 만료 여부는 동일한 범위 선택 결과에서 판단합니다. 갱신 결과를 화면에서 관측하도록 홈/캘린더의 일정 조회는 5초마다 다시 요청합니다.
+
+수동 동기화의 성공 응답은 현재 연결의 갱신 작업이 완료됐음을 뜻합니다. 전체 또는 같은 범위의 작업이 진행 중이면 그 결과를 기다립니다. 요청은 최대 25초 대기하며 완료 전에는 409 SYNC_IN_PROGRESS로 진행 중임을 알립니다. 대기 중 연결/일정 세대가 바뀌면 재검증하고, 유효한 완료 결과를 보장할 수 없을 때 충돌 응답을 반환합니다. 실행 Future는 SyncService가 관리하며 모든 상태/세대 변경은 Coordinator의 공통 잠금에서 처리합니다.

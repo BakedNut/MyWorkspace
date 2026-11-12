@@ -32,6 +32,8 @@ import tools.jackson.databind.json.JsonMapper;
 class ICloudConcurrencyTest {
   @Autowired org.springframework.test.web.servlet.MockMvc mvc;
   @Autowired ICloudService service;
+  @Autowired ICloudSyncService sync;
+  @Autowired ICloudCoordinator coordinator;
   @Autowired DocumentStore docs;
   @Autowired SecretCipher secrets;
   @Autowired JsonMapper json;
@@ -85,7 +87,7 @@ class ICloudConcurrencyTest {
               return List.of();
             });
     try (var pool = Executors.newFixedThreadPool(3)) {
-      var refresh = pool.submit(() -> service.refresh(date, date));
+      var refresh = pool.submit(() -> sync.refresh(date, date));
       try {
         assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(pool.submit(() -> service.list(date, date)).get(1, TimeUnit.SECONDS)).hasSize(1);
@@ -95,7 +97,7 @@ class ICloudConcurrencyTest {
       }
       refresh.get(2, TimeUnit.SECONDS);
     }
-    assertThat(service.state().calendar()).isNull();
+    assertThat(coordinator.read().calendar()).isNull();
     assertThat(cache.read(date, date)).isEmpty();
   }
 
@@ -118,7 +120,7 @@ class ICloudConcurrencyTest {
             });
     doThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture"))
         .when(cache)
-        .invalidate();
+        .markStale();
     mvc.perform(
             org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
                     "/api/calendar/events")
@@ -133,6 +135,181 @@ class ICloudConcurrencyTest {
         .andExpect(
             org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.title")
                 .value("saved"));
-    assertThat(service.cacheDirty).isTrue();
+    assertThat(coordinator.cacheDirty).isTrue();
+  }
+
+  @Test
+  void freshCoveringRangeDoesNotQueueAnotherCalDavRequest() throws Exception {
+    service.disconnect();
+    var state = connected();
+    var date = LocalDate.of(2026, 11, 12);
+    cache.cache(
+        date.minusDays(7),
+        date.plusDays(40),
+        List.of(Map.of("date", date.toString(), "title", "cached")),
+        List.of(),
+        state);
+    assertThat(service.list(date, date)).hasSize(1);
+    sync.worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+    verifyNoInteractions(dav);
+  }
+
+  @Test
+  void savingThenImmediatelyReadingPreservesOtherEventsUntilDelayedRefreshCompletes()
+      throws Exception {
+    service.disconnect();
+    var state = connected();
+    var date = LocalDate.of(2026, 11, 12);
+    String href = state.calendar().href() + "first.ics";
+    var first =
+        new CloudResource(
+            href,
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "old", date, true, null, null, null, null), null));
+    var other =
+        new CloudResource(
+            state.calendar().href() + "other.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "other", date, true, null, null, null, null), null));
+    var old = ICalendarMapper.expandResources(List.of(first, other), date, date, false);
+    cache.cache(date, date, old, List.of(first, other), state);
+    var input =
+        new EventInput("cal-remote", "changed", date, true, null, null, null, null, "v1", null);
+    var changed = new CloudResource(href, "v2", ICalendarMapper.write(input, first.content()));
+    var added =
+        new CloudResource(
+            state.calendar().href() + "added.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "remote added", date, true, null, null, null, null),
+                null));
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    doReturn(
+            new DavReply(
+                200,
+                java.net.URI.create(href),
+                java.net.http.HttpHeaders.of(Map.of("ETag", List.of("v1")), (a, b) -> true),
+                first.content()))
+        .when(dav)
+        .send(any(), any(), eq("GET"), any(), any());
+    doReturn(
+            new DavReply(
+                204,
+                java.net.URI.create(href),
+                java.net.http.HttpHeaders.of(Map.of("ETag", List.of("v2")), (a, b) -> true),
+                ""))
+        .when(dav)
+        .send(any(), any(), eq("PUT"), any(), any());
+    when(dav.query(any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+              return List.of(changed, other, added);
+            });
+    String id =
+        old.stream()
+            .filter(e -> "old".equals(e.get("title")))
+            .map(e -> (String) e.get("id"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(service.save(id, input)).containsEntry("title", "changed");
+    try {
+      assertThat(service.list(date, date))
+          .extracting(e -> e.get("title"))
+          .containsExactlyInAnyOrder("changed", "other");
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(service.list(date, date)).hasSize(2);
+    } finally {
+      release.countDown();
+    }
+    sync.worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+    assertThat(service.list(date, date))
+        .extracting(e -> e.get("title"))
+        .containsExactlyInAnyOrder("changed", "other", "remote added");
+  }
+
+  @Test
+  void deletingKeepsUnrelatedCachedEvents() throws Exception {
+    service.disconnect();
+    var state = connected();
+    var date = LocalDate.of(2026, 11, 12);
+    var removed =
+        new CloudResource(
+            state.calendar().href() + "removed.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "removed", date, true, null, null, null, null), null));
+    var other =
+        new CloudResource(
+            state.calendar().href() + "kept.ics",
+            "v1",
+            ICalendarMapper.write(
+                new EventInput("cal-remote", "kept", date, true, null, null, null, null), null));
+    var events = ICalendarMapper.expandResources(List.of(removed, other), date, date, false);
+    cache.cache(date, date, events, List.of(removed, other), state);
+    String id = (String) events.getFirst().get("id");
+    doReturn(
+            new DavReply(
+                204,
+                java.net.URI.create(removed.href()),
+                java.net.http.HttpHeaders.of(Map.of(), (a, b) -> true),
+                ""))
+        .when(dav)
+        .send(any(), any(), eq("DELETE"), any(), any());
+    service.delete(id, "v1");
+    assertThat(cache.read(date, date)).extracting(e -> e.get("title")).containsExactly("kept");
+  }
+
+  @Test
+  void manualSyncWaitsForAnExistingFullSync() throws Exception {
+    waitsForExistingRefresh(true);
+  }
+
+  @Test
+  void manualSyncWaitsForAnExistingRangeRefresh() throws Exception {
+    waitsForExistingRefresh(false);
+  }
+
+  void waitsForExistingRefresh(boolean fullSync) throws Exception {
+    service.disconnect();
+    var state = connected();
+    var date = LocalDate.of(2026, 11, 12);
+    cache.cache(date, date, List.of(), List.of(), state);
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var requested = new CountDownLatch(1);
+    when(dav.query(any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+              return List.of();
+            });
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Future<?> refresh =
+          fullSync ? pool.submit(() -> sync.sync()) : pool.submit(() -> sync.refresh(date, date));
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      var manual =
+          pool.submit(
+              () -> {
+                requested.countDown();
+                return service.syncNow(false);
+              });
+      try {
+        assertThat(requested.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> manual.get(150, TimeUnit.MILLISECONDS))
+            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      } finally {
+        release.countDown();
+      }
+      manual.get(3, TimeUnit.SECONDS);
+      refresh.get(3, TimeUnit.SECONDS);
+    }
+    assertThat(coordinator.read().lastSyncedAt()).isNotNull();
+    verify(dav, times(1)).query(any(), any(), any(), any());
   }
 }

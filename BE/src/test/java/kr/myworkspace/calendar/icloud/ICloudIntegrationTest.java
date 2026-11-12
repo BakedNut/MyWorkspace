@@ -40,7 +40,7 @@ class ICloudIntegrationTest {
   @Autowired DocumentStore docs;
   @Autowired JsonMapper json;
   @Autowired SecretCipher secrets;
-  @Autowired ICloudService cloud;
+  @Autowired ICloudSyncService sync;
   @MockitoBean CalDavClient dav;
   @MockitoBean HolidayService holidays;
   @MockitoBean MonitoringService monitoring;
@@ -151,7 +151,7 @@ class ICloudIntegrationTest {
       if ("Apple 일정".equals(row.path("title").asText())) id = row.path("id").asText();
     assertThat(id).isNotNull();
     assertThat(snapshot.getResponse().getContentAsString()).contains("기존 서버 일정");
-    cloud.worker.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+    sync.worker.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
     var headers = HttpHeaders.of(Map.of("ETag", List.of("\"v1\"")), (a, b) -> true);
     when(dav.send(any(), any(), eq("GET"), isNull(), anyMap()))
         .thenReturn(new DavReply(200, URI.create(resource.href()), headers, text));
@@ -206,7 +206,7 @@ class ICloudIntegrationTest {
                 .header(SecurityConfig.CLIENT_HEADER, ADDRESS)
                 .with(csrf()))
         .andExpect(status().isOk());
-    cloud.worker.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+    sync.worker.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
     doThrow(new ApiException(503, "NETWORK", "연결 실패"))
         .when(dav)
         .query(any(), eq(href), any(), any());
