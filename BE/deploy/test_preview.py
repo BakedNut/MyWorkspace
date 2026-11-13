@@ -1,6 +1,8 @@
 import contextlib
 import hashlib
 import io
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import tempfile
@@ -20,6 +22,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         dist = self.root / "FE/dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("preview")
+        self.mock("LOCK_PATH", new=self.root / "preview-deploy.lock")
         self.old_jar = "/opt/myworkspace-preview/releases/old.jar"
         self.old_frontend = "/var/www/myworkspace-preview/releases/old"
         self.run = self.mock("run", side_effect=self.server_run)
@@ -140,6 +143,37 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertIn("release commit is active; local deployment record write failed", warnings.getvalue())
         commands = [call.args[1] for call in self.run.call_args_list]
         self.assertFalse(any(args[:3] == ["ln", "-s", self.old_jar] for args in commands))
+
+    def test_overlapping_deployment_is_rejected_before_reading_release_links(self):
+        started = threading.Event()
+        release = threading.Event()
+        def run(ct, args, data=None):
+            if args == ["readlink", preview.JAR]:
+                started.set()
+                if not release.wait(5):
+                    raise RuntimeError("test deployment did not release")
+            return self.server_run(ct, args, data)
+        self.run.side_effect = run
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            first = executor.submit(preview.deploy, self.root)
+            try:
+                self.assertTrue(started.wait(5))
+                before = self.run.call_count
+                with self.assertRaisesRegex(RuntimeError, "already running"):
+                    preview.deploy(self.root)
+                self.assertEqual(self.run.call_count, before)
+            finally:
+                release.set()
+            first.result(timeout=5)
+        self.private.assert_called_once()
+
+    def test_lock_is_released_after_a_failed_deployment_and_rollback(self):
+        self.ready.side_effect = [False, True, True]
+        with self.assertRaisesRegex(RuntimeError, "backend did not become ready"):
+            preview.deploy(self.root)
+        self.ready.side_effect = None
+        preview.deploy(self.root)
+        self.private.assert_called_once()
 
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:

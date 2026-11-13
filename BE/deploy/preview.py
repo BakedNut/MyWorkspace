@@ -2,6 +2,7 @@
 from pathlib import Path
 import datetime
 import gzip
+import fcntl
 import hashlib
 import json
 import subprocess
@@ -10,6 +11,7 @@ import time
 from initialize import run, private_file
 
 
+LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
 
@@ -70,6 +72,16 @@ def restore(previous_jar, previous_frontend, stamp):
 
 
 def deploy(root=None):
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with LOCK_PATH.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another preview deployment is already running") from None
+        _deploy(root)
+
+
+def _deploy(root=None):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
     jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
     dist = root / "FE/dist"
