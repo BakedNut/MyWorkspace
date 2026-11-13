@@ -214,3 +214,140 @@ it("기존 잘못된 URL이 접힌 분류에 있어도 다른 항목을 표시�
     "https://example.com/",
   );
 });
+
+it.each(["link", "group", "empty-link"])(
+  "추가 응답 유실 후 재시도해도 같은 ID로 이미 저장된 작업을 확인한다 %s",
+  async (kind) => {
+    let persisted: ShortcutBoard =
+      kind === "empty-link" ? { revision: 4, groups: [] } : structuredClone(initial);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        persisted = { ...structuredClone(input), revision: input.revision + 1 };
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== persisted.revision)
+        throw new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    });
+    setup();
+    const button = screen.getByRole("button", { name: kind === "group" ? "분류 추가" : "추가" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "한 번만 추가" } });
+    if (kind !== "group")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/new" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(within(modal).getByRole("alert")).toHaveTextContent("다른 곳"));
+    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
+    const ids = (value: ShortcutBoard) =>
+      kind === "group"
+        ? value.groups.filter((group) => group.name === "한 번만 추가").map((group) => group.id)
+        : value.groups
+            .flatMap((group) => group.links)
+            .filter((link) => link.name === "한 번만 추가")
+            .map((link) => link.id);
+    expect(ids(save.mock.calls[0]![0])).toEqual(ids(save.mock.calls[1]![0]));
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(ids(persisted)).toHaveLength(1);
+  },
+);
+
+it("응답 유실 후 입력을 수정해 다시 저장해도 원래 추가 ID를 갱신한다", async () => {
+  let persisted = structuredClone(initial);
+  vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+  let calls = 0;
+  const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+    calls++;
+    if (calls === 1) {
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      throw new ApiError("응답 유실", "NETWORK");
+    }
+    if (input.revision !== persisted.revision)
+      throw new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT");
+    persisted = { ...structuredClone(input), revision: input.revision + 1 };
+    return persisted;
+  });
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "추가" }));
+  const modal = screen.getByRole("dialog");
+  fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "최초 이름" } });
+  fireEvent.change(within(modal).getByLabelText("URL"), {
+    target: { value: "https://example.com/" },
+  });
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await within(modal).findByRole("alert");
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
+  fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "수정 이름" } });
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await screen.findByRole("link", { name: "수정 이름 새 탭에서 열기" });
+  expect(persisted.groups[0]!.links).toHaveLength(3);
+  expect(persisted.groups[0]!.links[2]!.id).toBe(save.mock.calls[0]![0].groups[0]!.links[2]!.id);
+});
+
+it.each(["link", "group"])(
+  "이미 저장된 추가 작업의 재시도가 이후 서버 변경을 덮어쓰지 않는다 %s",
+  async (kind) => {
+    let persisted = structuredClone(initial);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        persisted = { ...structuredClone(input), revision: input.revision + 2 };
+        if (kind === "link") {
+          const link = persisted.groups[0]!.links.pop()!;
+          persisted.groups.push({
+            id: "moved",
+            name: "서버 분류",
+            collapsed: false,
+            links: [{ ...link, name: "서버 수정", url: "https://example.com/remote" }],
+          });
+        } else persisted.groups[persisted.groups.length - 1]!.name = "서버 수정";
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== persisted.revision)
+        throw new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: kind === "group" ? "분류 추가" : "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "최초 이름" } });
+    if (kind === "link")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await within(modal).findByRole("alert");
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText("서버 수정")).toBeInTheDocument());
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(persisted.revision).toBe(6);
+    if (kind === "link")
+      expect(persisted.groups[1]!.links[0]).toMatchObject({
+        name: "서버 수정",
+        url: "https://example.com/remote",
+      });
+    else expect(persisted.groups[1]!.name).toBe("서버 수정");
+  },
+);

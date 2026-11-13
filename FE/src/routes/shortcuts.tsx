@@ -34,7 +34,14 @@ function ShortcutsPage() {
   const editingBase = useRef<Board | null>(null);
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
-  const [dialog, setDialog] = useState<ShortcutDialogTarget | null>(null);
+  const attemptedCreate = useRef<{ name: string; url?: string; groupId?: string } | null>(null);
+  const [dialog, setDialog] = useState<(ShortcutDialogTarget & { operationId: string }) | null>(
+    null,
+  );
+  const openDialog = (target: ShortcutDialogTarget) => {
+    attemptedCreate.current = null;
+    setDialog({ ...target, operationId: newId() });
+  };
   const mutation = useMutation({
     mutationFn: (board: Board) => api.shortcuts.save(board),
     onSuccess: (saved) => queryClient.setQueryData(queryKey, saved),
@@ -69,7 +76,7 @@ function ShortcutsPage() {
             variant="outline"
             disabled={!board || busy}
             ref={fallbackFocus}
-            onClick={() => setDialog({ kind: "group" })}
+            onClick={() => openDialog({ kind: "group" })}
           >
             <FolderPlus aria-hidden /> 분류 추가
           </Button>
@@ -136,7 +143,7 @@ function ShortcutsPage() {
               <Button
                 className="h-10 px-3 sm:px-4"
                 disabled={!board || busy}
-                onClick={() => setDialog({ kind: "link" })}
+                onClick={() => openDialog({ kind: "link" })}
               >
                 <Plus aria-hidden /> 추가
               </Button>
@@ -179,7 +186,7 @@ function ShortcutsPage() {
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-5 text-center">
               <Bookmark aria-hidden className="mb-1 size-8 text-primary/70" />
               <p className="font-medium">자주 찾는 사이트를 모아 보세요.</p>
-              <Button variant="outline" onClick={() => setDialog({ kind: "link" })}>
+              <Button variant="outline" onClick={() => openDialog({ kind: "link" })}>
                 <Plus aria-hidden /> 바로가기 추가
               </Button>
             </div>
@@ -191,13 +198,13 @@ function ShortcutsPage() {
             onChange={(next) => {
               void change(next).catch(() => {});
             }}
-            onEditLink={(link, groupId) => setDialog({ kind: "link", link, groupId })}
-            onEditGroup={(group) => setDialog({ kind: "group", group })}
-            onDeleteGroup={(group) => setDialog({ kind: "delete-group", group })}
+            onEditLink={(link, groupId) => openDialog({ kind: "link", link, groupId })}
+            onEditGroup={(group) => openDialog({ kind: "group", group })}
+            onDeleteGroup={(group) => openDialog({ kind: "delete-group", group })}
           />
           {dialog && (
             <ShortcutDialog
-              key={`${dialog.kind}-${dialog.kind === "link" ? (dialog.link?.id ?? "new") : (dialog.group?.id ?? "new")}`}
+              key={dialog.operationId}
               onRestoreFocus={() => {
                 const trigger = dialogTrigger.current;
                 if (trigger?.isConnected && !trigger.disabled) trigger.focus();
@@ -210,8 +217,31 @@ function ShortcutsPage() {
                 mutation.reset();
               }}
               onSaveLink={async ({ name, url, groupId }) => {
-                const id = dialog.kind === "link" ? (dialog.link?.id ?? newId()) : newId();
-                const group = groupId || board.groups[0]?.id || newId();
+                const id =
+                  dialog.kind === "link"
+                    ? (dialog.link?.id ?? dialog.operationId)
+                    : dialog.operationId;
+                let group = groupId || board.groups[0]?.id || `group-${dialog.operationId}`;
+                const existingGroup = board.groups.find((item) =>
+                  item.links.some((link) => link.id === id),
+                );
+                const existingLink = existingGroup?.links.find((link) => link.id === id);
+                if (dialog.kind === "link" && !dialog.link) {
+                  const attempted = attemptedCreate.current;
+                  // Preserve server edits to fields unchanged since the original add attempt.
+                  if (attempted && existingLink && existingGroup) {
+                    if (name === attempted.name) name = existingLink.name;
+                    if (url === attempted.url) url = existingLink.url;
+                    if (group === attempted.groupId) group = existingGroup.id;
+                  }
+                  if (!attempted) attemptedCreate.current = { name, url, groupId: group };
+                }
+                if (
+                  existingGroup?.id === group &&
+                  existingLink?.name === name &&
+                  existingLink.url === url
+                )
+                  return;
                 if (board.groups.length && !board.groups.some((item) => item.id === group))
                   throw new Error("분류가 변경됐습니다. 분류를 다시 선택하세요.");
                 const groups = board.groups.length
@@ -231,12 +261,25 @@ function ShortcutsPage() {
                 });
               }}
               onSaveGroup={async (name) => {
-                const selected = dialog.kind === "group" ? dialog.group : undefined;
+                const selected =
+                  dialog.kind === "group"
+                    ? (dialog.group ??
+                      board.groups.find((group) => group.id === dialog.operationId))
+                    : undefined;
+                if (dialog.kind === "group" && !dialog.group) {
+                  const attempted = attemptedCreate.current;
+                  if (attempted && selected && name === attempted.name) name = selected.name;
+                  if (!attempted) attemptedCreate.current = { name };
+                }
+                if (selected?.name === name) return;
                 const groups = selected
                   ? board.groups.map((group) =>
                       group.id === selected.id ? { ...group, name } : group,
                     )
-                  : [...board.groups, { id: newId(), name, collapsed: false, links: [] }];
+                  : [
+                      ...board.groups,
+                      { id: dialog.operationId, name, collapsed: false, links: [] },
+                    ];
                 await change({ ...board, groups });
               }}
               onDeleteGroup={async () => {
