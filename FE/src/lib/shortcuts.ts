@@ -19,6 +19,53 @@ export function normalizeShortcutUrl(input: string): string {
   return url.href;
 }
 
+// Apply changed pair orders first, then preserve compatible saved order constraints.
+function mergeShortcutOrder(
+  base: string[],
+  draft: string[],
+  latest: string[],
+  ids: string[],
+): string[] {
+  const following = new Map(ids.map((id) => [id, new Set<string>()]));
+  const original = new Map(base.map((id, index) => [id, index]));
+  const constrain = (items: string[], changesOnly: boolean) => {
+    const present = items.filter((id) => following.has(id));
+    for (let left = 0; left < present.length; left++) {
+      for (let right = left + 1; right < present.length; right++) {
+        const before = present[left]!;
+        const after = present[right]!;
+        if (
+          changesOnly &&
+          original.has(before) &&
+          original.has(after) &&
+          original.get(before)! < original.get(after)!
+        )
+          continue;
+        if (following.get(before)!.has(after) || following.get(after)!.has(before)) continue;
+        const successors = [after, ...following.get(after)!];
+        for (const [id, reachable] of following) {
+          if (id === before || reachable.has(before)) {
+            for (const next of successors) reachable.add(next);
+          }
+        }
+      }
+    }
+  };
+  constrain(draft, true);
+  constrain(latest, true);
+  constrain(latest, false);
+  constrain(draft, false);
+  const remaining = [...new Set([...latest, ...draft, ...ids])].filter((id) => following.has(id));
+  const order: string[] = [];
+  while (remaining.length) {
+    const index = remaining.findIndex(
+      (id) => !remaining.some((other) => following.get(other)!.has(id)),
+    );
+    order.push(remaining.splice(index, 1)[0]!);
+  }
+  return order;
+}
+
 export function moveShortcut(
   board: ShortcutBoard,
   linkId: string,
@@ -86,35 +133,12 @@ function mergeShortcutItems<T extends { id: string }>(base: T[], draft: T[], lat
     }
     merged.set(id, item);
   }
-  const common = new Set(base.filter((item) => local.has(item.id)).map((item) => item.id));
-  const reordered =
-    base
-      .filter((item) => common.has(item.id))
-      .map((item) => item.id)
-      .join("\n") !==
-    draft
-      .filter((item) => common.has(item.id))
-      .map((item) => item.id)
-      .join("\n");
-  const preferred = reordered ? draft : latest;
-  const secondary = reordered ? latest : draft;
-  const order = preferred.map((item) => item.id).filter((id) => merged.has(id));
-  for (let index = 0; index < secondary.length; index++) {
-    const id = secondary[index]!.id;
-    if (!merged.has(id) || order.includes(id)) continue;
-    const previous = secondary
-      .slice(0, index)
-      .reverse()
-      .find((item) => order.includes(item.id));
-    const next = secondary.slice(index + 1).find((item) => order.includes(item.id));
-    const position = previous
-      ? order.indexOf(previous.id) + 1
-      : next
-        ? order.indexOf(next.id)
-        : order.length;
-    order.splice(position, 0, id);
-  }
-  return order.map((id) => merged.get(id)!);
+  return mergeShortcutOrder(
+    base.map((item) => item.id),
+    draft.map((item) => item.id),
+    latest.map((item) => item.id),
+    [...merged.keys()],
+  ).map((id) => merged.get(id)!);
 }
 
 export function reconcileShortcutBoard(

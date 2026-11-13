@@ -92,7 +92,7 @@ describe("동시 편집 초안 조정", () => {
     const latest = structuredClone(board);
     latest.groups[0]!.links.push({ id: "three", name: "추가", url: "https://example.com/3" });
     const result = reconcileShortcutBoard(board, draft, latest);
-    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "three", "one"]);
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one", "three"]);
   });
 
   it("같은 필드의 충돌은 초안을 우선하고 원격 분류 삭제와 새 분류를 반영한다", () => {
@@ -148,4 +148,63 @@ it("원래 분류도 삭제됐다면 새 바로가기를 첫 번째 남은 분�
   const result = reconcileShortcutBoard(board, draft, latest);
   expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
   expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
+});
+
+it("서로 다른 바로가기와 분류의 순서 변경을 함께 보존한다", () => {
+  const ids = ["a", "b", "c", "d"];
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ids.map((id) => ({
+      id,
+      name: id,
+      collapsed: false,
+      links: ids.map((link) => ({ id: `${id}-${link}`, name: link, url: "https://example.com/" })),
+    })),
+  };
+  const draft = structuredClone(base);
+  [draft.groups[0], draft.groups[1]] = [draft.groups[1]!, draft.groups[0]!];
+  const localLinks = draft.groups.find((group) => group.id === "a")!.links;
+  [localLinks[0], localLinks[1]] = [localLinks[1]!, localLinks[0]!];
+  const latest = structuredClone(base);
+  [latest.groups[2], latest.groups[3]] = [latest.groups[3]!, latest.groups[2]!];
+  const remoteLinks = latest.groups[0]!.links;
+  [remoteLinks[2], remoteLinks[3]] = [remoteLinks[3]!, remoteLinks[2]!];
+  latest.revision = 2;
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b", "a", "d", "c"]);
+  expect(result.groups.find((group) => group.id === "a")!.links.map((link) => link.id)).toEqual([
+    "a-b",
+    "a-a",
+    "a-d",
+    "a-c",
+  ]);
+});
+
+it("4개 항목의 모든 편집 조합에서 양쪽이 바꾼 상대 순서를 보존한다", () => {
+  const permutations = (ids: string[]): string[][] =>
+    ids.length === 0
+      ? [[]]
+      : ids.flatMap((id) =>
+          permutations(ids.filter((item) => item !== id)).map((rest) => [id, ...rest]),
+        );
+  const ids = ["a", "b", "c", "d"];
+  const makeBoard = (order: string[]): ShortcutBoard => ({
+    revision: 1,
+    groups: order.map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  });
+  for (const local of permutations(ids)) {
+    for (const remote of permutations(ids)) {
+      const result = reconcileShortcutBoard(makeBoard(ids), makeBoard(local), makeBoard(remote));
+      const order = result.groups.map((group) => group.id);
+      for (let first = 0; first < ids.length; first++) {
+        for (let second = first + 1; second < ids.length; second++) {
+          const a = ids[first]!,
+            b = ids[second]!;
+          if (local.indexOf(a) > local.indexOf(b) || remote.indexOf(a) > remote.indexOf(b))
+            expect(order.indexOf(a)).toBeGreaterThan(order.indexOf(b));
+        }
+      }
+      expect(new Set(order).size).toBe(4);
+    }
+  }
 });
