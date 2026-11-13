@@ -246,9 +246,8 @@ it.each(["link", "group", "empty-link"])(
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
     expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
-    await waitFor(() => expect(within(modal).getByRole("alert")).toHaveTextContent("다른 곳"));
-    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(api.shortcuts.get).toHaveBeenCalledTimes(2);
     const ids = (value: ShortcutBoard) =>
       kind === "group"
         ? value.groups.filter((group) => group.name === "한 번만 추가").map((group) => group.id)
@@ -257,8 +256,7 @@ it.each(["link", "group", "empty-link"])(
             .filter((link) => link.name === "한 번만 추가")
             .map((link) => link.id);
     expect(ids(save.mock.calls[0]![0])).toEqual(ids(save.mock.calls[1]![0]));
-    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save.mock.calls[1]![0]).toEqual(save.mock.calls[0]![0]);
     expect(save).toHaveBeenCalledTimes(2);
     expect(ids(persisted)).toHaveLength(1);
   },
@@ -289,9 +287,6 @@ it("응답 유실 후 입력을 수정해 다시 저장해도 원래 추가 ID�
   });
   fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
   await within(modal).findByRole("alert");
-  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
-  await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
   fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "수정 이름" } });
   fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
   await screen.findByRole("link", { name: "수정 이름 새 탭에서 열기" });
@@ -339,7 +334,6 @@ it.each(["link", "group"])(
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
     await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText("서버 수정")).toBeInTheDocument());
-    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(save).toHaveBeenCalledTimes(2);
     expect(persisted.revision).toBe(6);
@@ -352,7 +346,7 @@ it.each(["link", "group"])(
   },
 );
 
-it.each(["automatic", "initial-manual", "manual-after-refresh", "manual-target-removed"])(
+it.each(["automatic", "initial-manual", "manual-after-loss", "manual-target-removed"])(
   "추가 재시도에서 자동 대체 분류와 사용자 선택을 구분한다 %s",
   async (mode) => {
     const original = structuredClone(initial);
@@ -403,16 +397,16 @@ it.each(["automatic", "initial-manual", "manual-after-refresh", "manual-target-r
       fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "dev" } });
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
     await within(modal).findByRole("alert");
-    if (mode === "manual-target-removed")
+    if (mode === "manual-target-removed" || mode === "manual-after-loss")
       fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "b" } });
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
-    await waitFor(() => expect(within(modal).getByLabelText("분류")).toHaveValue("c"));
-    if (mode === "manual-after-refresh")
-      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "b" } });
-    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    if (mode === "manual-target-removed") {
+      await waitFor(() => expect(within(modal).getByLabelText("분류")).toHaveValue("c"));
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    }
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(save).toHaveBeenCalledTimes(mode === "manual-after-refresh" ? 3 : 2);
-    const destination = mode === "manual-after-refresh" ? "b" : "c";
+    expect(save).toHaveBeenCalledTimes(mode === "manual-after-loss" ? 3 : 2);
+    const destination = mode === "manual-after-loss" ? "b" : "c";
     expect(persisted.groups.find((group) => group.id === destination)!.links[0]!.name).toBe(
       "서버 수정",
     );
@@ -589,6 +583,7 @@ it.each(
     vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
     let calls = 0;
     let id = "";
+    let lostSave = false;
     const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
       calls++;
       const added = isGroup
@@ -601,7 +596,15 @@ it.each(
         throw new ApiError("전송 실패", "NETWORK");
       }
       expect(added.id).toBe(id);
-      if (calls === 2) {
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      const submittedB =
+        isGroup || field === "link-name"
+          ? added.name === "B"
+          : field === "link-url"
+            ? "url" in added && added.url === "https://example.com/B"
+            : input.groups.find((group) => group.id === "b")!.links.some((link) => link.id === id);
+      if (!lostSave && submittedB) {
+        lostSave = true;
         persisted = { ...structuredClone(input), revision: input.revision + 2 };
         if (isGroup) persisted.groups.find((group) => group.id === id)!.name = "C";
         else {
@@ -618,7 +621,6 @@ it.each(
         }
         throw new ApiError("응답 유실", "NETWORK");
       }
-      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
       persisted = { ...structuredClone(input), revision: input.revision + 1 };
       return persisted;
     });
@@ -648,11 +650,9 @@ it.each(
     expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
     if (changedAfterLoss) changeField("D");
     fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
-    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
-    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(save).toHaveBeenCalledTimes(changedAfterLoss ? 4 : 3);
+    expect(api.shortcuts.get).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(changedAfterLoss ? 5 : 4);
     const expected = changedAfterLoss ? "D" : "C";
     if (isGroup) expect(persisted.groups.find((group) => group.id === id)!.name).toBe(expected);
     else {
@@ -664,6 +664,129 @@ it.each(
       if (field === "link-url") expect(added.url).toBe(`https://example.com/${expected}`);
       if (field === "link-group") expect(destination.id).toBe(expected.toLowerCase());
     }
+  },
+);
+
+it.each(["link-name", "link-url", "link-group", "group-name"])(
+  "같은 리비전의 불확실한 요청을 확인한 뒤 새 입력을 저장한다 %s",
+  async (field) => {
+    const isGroup = field === "group-name";
+    const original = structuredClone(initial);
+    original.groups.push({ id: "b", name: "B", collapsed: false, links: [] });
+    let persisted = structuredClone(original);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 2) throw new ApiError("다시 전송 실패", "NETWORK");
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      if (calls === 1) throw new ApiError("응답 유실", "NETWORK");
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: isGroup ? "분류 추가" : "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "A" } });
+    if (!isGroup)
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/A" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
+    const label = field === "link-url" ? "URL" : field === "link-group" ? "분류" : "이름";
+    const value =
+      field === "link-url" ? "https://example.com/B" : field === "link-group" ? "b" : "B";
+    fireEvent.change(within(modal).getByLabelText(label), { target: { value } });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("다시 전송 실패");
+    for (let retry = 0; retry < 3 && screen.queryByRole("dialog"); retry++) {
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog") === null ||
+            !within(modal).getByRole("button", { name: "완료" }).hasAttribute("disabled"),
+        ).toBe(true),
+      );
+    }
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    if (isGroup) expect(persisted.groups.at(-1)!.name).toBe("B");
+    else {
+      const group = persisted.groups.find((item) =>
+        item.links.some((link) => !["github", "react"].includes(link.id)),
+      )!;
+      const link = group.links.find((item) => !["github", "react"].includes(item.id))!;
+      if (field === "link-name") expect(link.name).toBe("B");
+      if (field === "link-url") expect(link.url).toBe("https://example.com/B");
+      if (field === "link-group") expect(group.id).toBe("b");
+    }
+    expect(save).toHaveBeenCalledTimes(4);
+  },
+);
+
+it.each(["automatic", "initial-manual", "explicit-final"])(
+  "자동 표시한 분류가 연속 응답 유실 후에도 사용자 선택으로 바뀌지 않는다 %s",
+  async (mode) => {
+    const original: ShortcutBoard = {
+      revision: 1,
+      groups: ["a", "b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    };
+    if (mode === "initial-manual")
+      [original.groups[0], original.groups[1]] = [original.groups[1]!, original.groups[0]!];
+    let persisted = structuredClone(original);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let losses = 0;
+    vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      if (losses < 2) {
+        const source = persisted.groups.find((group) => group.links.length)!;
+        const link = source.links[0]!;
+        source.links = [];
+        persisted.groups.find((group) => group.id === (losses === 0 ? "b" : "c"))!.links = [link];
+        persisted.revision++;
+        losses++;
+        throw new ApiError(`응답 유실 ${losses}`, "NETWORK");
+      }
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("button", { name: "a 0" });
+    fireEvent.click(screen.getByRole("button", { name: "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "처음 이름" } });
+    fireEvent.change(within(modal).getByLabelText("URL"), {
+      target: { value: "https://example.com/" },
+    });
+    if (mode === "initial-manual")
+      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "a" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실 1");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "이름만 수정" } });
+    for (let retry = 0; retry < 3 && losses < 2; retry++) {
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+      await waitFor(() =>
+        expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled(),
+      );
+    }
+    expect(losses).toBe(2);
+    expect(within(modal).getByRole("alert")).toHaveTextContent("응답 유실 2");
+    if (mode === "explicit-final")
+      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "d" } });
+    for (let retry = 0; retry < 3 && screen.queryByRole("dialog"); retry++) {
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog") === null ||
+            !within(modal).getByRole("button", { name: "완료" }).hasAttribute("disabled"),
+        ).toBe(true),
+      );
+    }
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const destination = persisted.groups.find((group) => group.links.length)!;
+    expect(destination.id).toBe(mode === "explicit-final" ? "d" : "c");
+    expect(destination.links[0]!.name).toBe("이름만 수정");
   },
 );
 

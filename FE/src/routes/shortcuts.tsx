@@ -20,6 +20,8 @@ export const Route = createFileRoute("/shortcuts")({
 });
 
 const queryKey = ["shortcuts"];
+type CreateSubmission = { name: string; url?: string; groupSelectionVersion?: number };
+
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 
 function ShortcutsPage() {
@@ -37,11 +39,9 @@ function ShortcutsPage() {
   const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
-  const attemptedCreate = useRef<{
-    name: string;
-    url?: string;
-    groupSelectionVersion?: number | null;
-  } | null>(null);
+  const attemptedCreate = useRef<(CreateSubmission & { board: Board; uncertain: boolean }) | null>(
+    null,
+  );
   const [dialog, setDialog] = useState<(ShortcutDialogTarget & { operationId: string }) | null>(
     null,
   );
@@ -62,21 +62,47 @@ function ShortcutsPage() {
   const board = draft ?? query.data;
   const editing = draft !== null;
   const busy = mutation.isPending || query.isFetching;
-  const change = async (next: Board, attempt?: NonNullable<typeof attemptedCreate.current>) => {
+  const change = async (next: Board, attempt?: CreateSubmission) => {
     if (editing) {
       setDraft(next);
       return;
     }
     const previous = attemptedCreate.current;
-    if (attempt) attemptedCreate.current = attempt;
+    if (attempt) attemptedCreate.current = { ...attempt, board: next, uncertain: false };
     try {
       await mutation.mutateAsync(next);
     } catch (error) {
       // Rejected writes cannot replace the last potentially persisted submission.
-      if (attempt && error instanceof ApiError && error.code !== "NETWORK")
-        attemptedCreate.current = previous;
+      if (attempt) {
+        if (error instanceof ApiError && error.code !== "NETWORK")
+          attemptedCreate.current = previous;
+        else attemptedCreate.current!.uncertain = true;
+      }
       throw error;
     }
+  };
+
+  const confirmCreate = async (current: Board): Promise<Board> => {
+    const pending = attemptedCreate.current;
+    if (!pending?.uncertain) return current;
+    let confirmed: Board;
+    try {
+      // Reuse the exact uncertain write before accepting another payload at its revision.
+      confirmed = await mutation.mutateAsync(pending.board);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "CONFLICT") {
+        if (error instanceof ApiError && error.code !== "NETWORK") pending.uncertain = false;
+        throw error;
+      }
+      // Reuse the conflict-triggered refresh if it has already completed.
+      confirmed = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: () => api.shortcuts.get(),
+        staleTime: Infinity,
+      });
+    }
+    pending.uncertain = false;
+    return confirmed;
   };
 
   return (
@@ -272,14 +298,24 @@ function ShortcutsPage() {
                 setDialog(null);
                 mutation.reset();
               }}
-              onSaveLink={async ({ name, url, groupId, groupSelectionVersion }) => {
+              onSaveLink={async ({
+                name,
+                url,
+                groupId,
+                groupSelectionVersion,
+                automaticGroupSelection,
+              }) => {
+                const current =
+                  dialog.kind === "link" && !dialog.link && !editing
+                    ? await confirmCreate(board)
+                    : board;
                 const submitted = { name, url, groupSelectionVersion };
                 const id =
                   dialog.kind === "link"
                     ? (dialog.link?.id ?? dialog.operationId)
                     : dialog.operationId;
-                let group = groupId || board.groups[0]?.id || `group-${dialog.operationId}`;
-                const existingGroup = board.groups.find((item) =>
+                let group = groupId || current.groups[0]?.id || `group-${dialog.operationId}`;
+                const existingGroup = current.groups.find((item) =>
                   item.links.some((link) => link.id === id),
                 );
                 const existingLink = existingGroup?.links.find((link) => link.id === id);
@@ -290,7 +326,7 @@ function ShortcutsPage() {
                     if (name === attempted.name) name = existingLink.name;
                     if (url === attempted.url) url = existingLink.url;
                     if (
-                      groupSelectionVersion === null ||
+                      automaticGroupSelection ||
                       groupSelectionVersion === attempted.groupSelectionVersion
                     )
                       group = existingGroup.id;
@@ -299,7 +335,7 @@ function ShortcutsPage() {
                 if (dialog.kind === "link" && dialog.link && existingLink && existingGroup) {
                   if (name === dialog.link.name) name = existingLink.name;
                   if (url === dialog.link.url) url = existingLink.url;
-                  if (groupSelectionVersion === null || groupSelectionVersion === 0)
+                  if (automaticGroupSelection || groupSelectionVersion === 0)
                     group = existingGroup.id;
                 }
                 if (
@@ -308,14 +344,14 @@ function ShortcutsPage() {
                   existingLink.url === url
                 )
                   return;
-                if (board.groups.length && !board.groups.some((item) => item.id === group))
+                if (current.groups.length && !current.groups.some((item) => item.id === group))
                   throw new Error("분류가 변경됐습니다. 분류를 다시 선택하세요.");
-                const groups = board.groups.length
-                  ? board.groups
+                const groups = current.groups.length
+                  ? current.groups
                   : [{ id: group, name: "미분류", collapsed: false, links: [] }];
                 await change(
                   {
-                    ...board,
+                    ...current,
                     groups: groups.map((item) => {
                       if (item.id !== group)
                         return { ...item, links: item.links.filter((link) => link.id !== id) };
@@ -330,11 +366,15 @@ function ShortcutsPage() {
                 );
               }}
               onSaveGroup={async (name) => {
+                const current =
+                  dialog.kind === "group" && !dialog.group && !editing
+                    ? await confirmCreate(board)
+                    : board;
                 const submitted = { name };
                 const selected =
                   dialog.kind === "group"
                     ? (dialog.group ??
-                      board.groups.find((group) => group.id === dialog.operationId))
+                      current.groups.find((group) => group.id === dialog.operationId))
                     : undefined;
                 if (dialog.kind === "group" && !dialog.group) {
                   const attempted = attemptedCreate.current;
@@ -342,15 +382,15 @@ function ShortcutsPage() {
                 }
                 if (selected?.name === name) return;
                 const groups = selected
-                  ? board.groups.map((group) =>
+                  ? current.groups.map((group) =>
                       group.id === selected.id ? { ...group, name } : group,
                     )
                   : [
-                      ...board.groups,
+                      ...current.groups,
                       { id: dialog.operationId, name, collapsed: false, links: [] },
                     ];
                 await change(
-                  { ...board, groups },
+                  { ...current, groups },
                   dialog.kind === "group" && !dialog.group ? submitted : undefined,
                 );
               }}

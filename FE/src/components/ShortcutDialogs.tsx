@@ -32,14 +32,15 @@ export function ShortcutDialog({
   target: ShortcutDialogTarget;
   groups: ShortcutGroup[];
   currentGroupId?: string | undefined;
-  baselineGroupSelectionVersion?: number | null | undefined;
+  baselineGroupSelectionVersion?: number | undefined;
   onClose(): void;
   onRestoreFocus(): void;
   onSaveLink(input: {
     name: string;
     url: string;
     groupId: string;
-    groupSelectionVersion: number | null;
+    groupSelectionVersion: number;
+    automaticGroupSelection: boolean;
   }): Promise<void>;
   onSaveGroup(name: string): Promise<void>;
   onDeleteGroup(): Promise<void>;
@@ -110,8 +111,8 @@ export function ShortcutDialog({
                         ? target.link.url
                         : normalizeShortcutUrl(url),
                     groupId: selectedGroupId,
-                    groupSelectionVersion:
-                      groupId === selectedGroupId ? groupSelectionVersion : null,
+                    groupSelectionVersion,
+                    automaticGroupSelection: groupId !== selectedGroupId,
                   });
                 else await onSaveGroup(name.trim());
               }
