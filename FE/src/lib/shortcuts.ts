@@ -164,7 +164,19 @@ export function reconcileShortcutBoard(
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
-  const mergedLinks = mergeShortcutItems(links(base), links(draft), links(latest));
+  const baseLinks = links(base);
+  const latestLinks = links(latest);
+  const mergedLinks = mergeShortcutItems(baseLinks, links(draft), latestLinks);
+  for (const saved of latestLinks) {
+    const original = baseLinks.find((link) => link.id === saved.id);
+    if (
+      original &&
+      original.groupId !== saved.groupId &&
+      !draft.groups.some((group) => group.id === original.groupId) &&
+      !mergedLinks.some((link) => link.id === saved.id)
+    )
+      mergedLinks.push(saved);
+  }
   const properties = (board: ShortcutBoard) =>
     board.groups.map(({ links: _links, ...group }) => group);
   const groups: ShortcutBoard["groups"] = mergeShortcutItems(

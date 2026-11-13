@@ -255,3 +255,33 @@ it("모든 분류가 삭제됐을 때 남은 새 링크에 필요한 분류 속�
   expect(result.groups[0]!.name).toBe("수정한 이름");
   expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
 });
+
+it("분류 삭제로 초안에서 빠진 링크라도 서버에서 다른 분류로 이동했으면 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = draft.groups.filter((group) => group.id !== "a");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision = 4;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+  expect(result.revision).toBe(4);
+});
+
+it("개별 삭제한 링크는 같은 분류가 남아 있다면 삭제 의도를 유지한다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.links = draft.groups[0]!.links.filter((link) => link.id !== "one");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(["two"]);
+});
+
+it("이동한 링크의 대상 분류까지 삭제됐다면 남은 분류로 보존한다", () => {
+  const draft: ShortcutBoard = {
+    revision: board.revision,
+    groups: [{ id: "remaining", name: "남은 분류", collapsed: false, links: [] }],
+  };
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+});
