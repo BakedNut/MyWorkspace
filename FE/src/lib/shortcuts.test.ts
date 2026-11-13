@@ -120,14 +120,13 @@ it("빈 분류 삭제와 다른 탭의 이동이 겹쳐도 바로가기를 원�
   );
 });
 
-it("서버에서 삭제한 분류로 초안이 이동한 바로가기는 수정된 분류와 함께 보존한다", () => {
+it("링크 소속 변경만으로 삭제된 분류를 복원하지 않는다", () => {
   const draft = moveShortcut(structuredClone(board), "one", "b");
   const latest = structuredClone(board);
   latest.groups = latest.groups.filter((group) => group.id !== "b");
   const result = reconcileShortcutBoard(board, draft, latest);
-  expect(result.groups.map((group) => group.id)).toEqual(["a", "b"]);
-  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two"]);
-  expect(result.groups[1]!.links.map((link) => link.id)).toEqual(["one"]);
+  expect(result.groups.map((group) => group.id)).toEqual(["a"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one"]);
 });
 
 it("모든 분류 삭제 후에도 새로 추가된 바로가기를 담을 분류를 복원한다", () => {
@@ -224,4 +223,24 @@ it("새 항목 삽입이 다른 탭에서 이미 바꾼 기존 항목의 상대 
   const ids = inverse.groups.map((group) => group.id);
   expect(ids.indexOf("b")).toBeLessThan(ids.indexOf("a"));
   expect(ids).toContain("new");
+});
+
+it("링크를 밖으로 옮긴 분류가 다른 탭에서 삭제되면 빈 분류로 되살리지 않는다", () => {
+  const draft = moveShortcut(structuredClone(board), "one", "b");
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "a");
+  latest.revision = 8;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+  expect(result.revision).toBe(8);
+});
+
+it("분류 이름을 직접 수정한 경우에는 삭제 충돌에서도 분류 속성을 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.name = "수정한 이름";
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "a");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.find((group) => group.id === "a")?.name).toBe("수정한 이름");
 });

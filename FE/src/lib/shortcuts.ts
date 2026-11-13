@@ -165,7 +165,13 @@ export function reconcileShortcutBoard(
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
   const mergedLinks = mergeShortcutItems(links(base), links(draft), links(latest));
-  const groups = mergeShortcutItems(base.groups, draft.groups, latest.groups);
+  const properties = (board: ShortcutBoard) =>
+    board.groups.map(({ links: _links, ...group }) => group);
+  const groups: ShortcutBoard["groups"] = mergeShortcutItems(
+    properties(base),
+    properties(draft),
+    properties(latest),
+  ).map((group) => ({ ...group, links: [] }));
   // A concurrent move or addition must survive deletion of its destination group.
   for (const link of mergedLinks) {
     if (groups.some((group) => group.id === link.groupId)) continue;
