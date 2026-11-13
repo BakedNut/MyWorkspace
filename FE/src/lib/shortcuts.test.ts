@@ -236,11 +236,22 @@ it("링크를 밖으로 옮긴 분류가 다른 탭에서 삭제되면 빈 분�
   expect(result.revision).toBe(8);
 });
 
-it("분류 이름을 직접 수정한 경우에는 삭제 충돌에서도 분류 속성을 보존한다", () => {
+it("분류 이름 수정만으로 서버에서 삭제한 분류를 복원하지 않는다", () => {
   const draft = structuredClone(board);
   draft.groups[0]!.name = "수정한 이름";
   const latest = structuredClone(board);
   latest.groups = latest.groups.filter((group) => group.id !== "a");
   const result = reconcileShortcutBoard(board, draft, latest);
-  expect(result.groups.find((group) => group.id === "a")?.name).toBe("수정한 이름");
+  expect(result.groups.some((group) => group.id === "a")).toBe(false);
+});
+
+it("모든 분류가 삭제됐을 때 남은 새 링크에 필요한 분류 속성만 복원한다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.name = "수정한 이름";
+  draft.groups[0]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const latest: ShortcutBoard = { revision: 8, groups: [] };
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups).toHaveLength(1);
+  expect(result.groups[0]!.name).toBe("수정한 이름");
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
 });

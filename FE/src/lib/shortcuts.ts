@@ -171,7 +171,13 @@ export function reconcileShortcutBoard(
     properties(base),
     properties(draft),
     properties(latest),
-  ).map((group) => ({ ...group, links: [] }));
+  )
+    .filter(
+      (group) =>
+        !base.groups.some((original) => original.id === group.id) ||
+        latest.groups.some((saved) => saved.id === group.id),
+    )
+    .map((group) => ({ ...group, links: [] }));
   // A concurrent move or addition must survive deletion of its destination group.
   for (const link of mergedLinks) {
     if (groups.some((group) => group.id === link.groupId)) continue;
