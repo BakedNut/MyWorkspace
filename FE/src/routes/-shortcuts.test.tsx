@@ -573,3 +573,96 @@ it.each(["unchanged", "name", "group"])(
   },
 );
 
+it.each(
+  ["link-name", "link-url", "link-group", "group-name"].flatMap((field) =>
+    [false, true].map((changedAfterLoss) => ({ field, changedAfterLoss })),
+  ),
+)(
+  "각 추가 재시도의 제출값을 기준으로 서버 편집을 보존한다 $field / 직접 변경 $changedAfterLoss",
+  async ({ field, changedAfterLoss }) => {
+    const isGroup = field === "group-name";
+    const original = structuredClone(initial);
+    original.groups.push(
+      ...["b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    );
+    let persisted = structuredClone(original);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    let id = "";
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      const added = isGroup
+        ? input.groups.find((group) => !original.groups.some((item) => item.id === group.id))!
+        : input.groups
+            .flatMap((group) => group.links)
+            .find((link) => !["github", "react"].includes(link.id))!;
+      if (calls === 1) {
+        id = added.id;
+        throw new ApiError("전송 실패", "NETWORK");
+      }
+      expect(added.id).toBe(id);
+      if (calls === 2) {
+        persisted = { ...structuredClone(input), revision: input.revision + 2 };
+        if (isGroup) persisted.groups.find((group) => group.id === id)!.name = "C";
+        else {
+          const source = persisted.groups.find((group) =>
+            group.links.some((link) => link.id === id),
+          )!;
+          const link = source.links.find((link) => link.id === id)!;
+          if (field === "link-name") link.name = "C";
+          if (field === "link-url") link.url = "https://example.com/C";
+          if (field === "link-group") {
+            source.links = source.links.filter((item) => item.id !== id);
+            persisted.groups.find((group) => group.id === "c")!.links.push(link);
+          }
+        }
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: isGroup ? "분류 추가" : "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "A" } });
+    if (!isGroup)
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/A" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("전송 실패");
+    const changeField = (value: string) => {
+      const label = field === "link-url" ? "URL" : field === "link-group" ? "분류" : "이름";
+      const input =
+        field === "link-url"
+          ? `https://example.com/${value}`
+          : field === "link-group"
+            ? value.toLowerCase()
+            : value;
+      fireEvent.change(within(modal).getByLabelText(label), { target: { value: input } });
+    };
+    changeField("B");
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
+    if (changedAfterLoss) changeField("D");
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled());
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(changedAfterLoss ? 4 : 3);
+    const expected = changedAfterLoss ? "D" : "C";
+    if (isGroup) expect(persisted.groups.find((group) => group.id === id)!.name).toBe(expected);
+    else {
+      const destination = persisted.groups.find((group) =>
+        group.links.some((link) => link.id === id),
+      )!;
+      const added = destination.links.find((link) => link.id === id)!;
+      if (field === "link-name") expect(added.name).toBe(expected);
+      if (field === "link-url") expect(added.url).toBe(`https://example.com/${expected}`);
+      if (field === "link-group") expect(destination.id).toBe(expected.toLowerCase());
+    }
+  },
+);

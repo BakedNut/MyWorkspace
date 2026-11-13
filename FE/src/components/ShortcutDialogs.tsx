@@ -22,7 +22,7 @@ export function ShortcutDialog({
   target,
   groups,
   currentGroupId,
-  initialGroupSelectionVersion,
+  baselineGroupSelectionVersion,
   onClose,
   onRestoreFocus,
   onSaveLink,
@@ -32,7 +32,7 @@ export function ShortcutDialog({
   target: ShortcutDialogTarget;
   groups: ShortcutGroup[];
   currentGroupId?: string | undefined;
-  initialGroupSelectionVersion?: number | null | undefined;
+  baselineGroupSelectionVersion?: number | null | undefined;
   onClose(): void;
   onRestoreFocus(): void;
   onSaveLink(input: {
@@ -54,7 +54,7 @@ export function ShortcutDialog({
   );
   const [groupSelectionVersion, setGroupSelectionVersion] = useState(0);
   const selectedGroupId =
-    currentGroupId && initialGroupSelectionVersion === groupSelectionVersion
+    currentGroupId && baselineGroupSelectionVersion === groupSelectionVersion
       ? currentGroupId
       : groups.some((group) => group.id === groupId)
         ? groupId

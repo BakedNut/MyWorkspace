@@ -61,9 +61,21 @@ function ShortcutsPage() {
   const board = draft ?? query.data;
   const editing = draft !== null;
   const busy = mutation.isPending || query.isFetching;
-  const change = async (next: Board) => {
-    if (editing) setDraft(next);
-    else await mutation.mutateAsync(next);
+  const change = async (next: Board, attempt?: NonNullable<typeof attemptedCreate.current>) => {
+    if (editing) {
+      setDraft(next);
+      return;
+    }
+    const previous = attemptedCreate.current;
+    if (attempt) attemptedCreate.current = attempt;
+    try {
+      await mutation.mutateAsync(next);
+    } catch (error) {
+      // Rejected writes cannot replace the last potentially persisted submission.
+      if (attempt && error instanceof ApiError && error.code !== "NETWORK")
+        attemptedCreate.current = previous;
+      throw error;
+    }
   };
 
   return (
@@ -246,7 +258,7 @@ function ShortcutsPage() {
                     )?.id
                   : undefined
               }
-              initialGroupSelectionVersion={
+              baselineGroupSelectionVersion={
                 dialog.kind === "link" && dialog.link
                   ? 0
                   : attemptedCreate.current?.groupSelectionVersion
@@ -256,6 +268,7 @@ function ShortcutsPage() {
                 mutation.reset();
               }}
               onSaveLink={async ({ name, url, groupId, groupSelectionVersion }) => {
+                const submitted = { name, url, groupSelectionVersion };
                 const id =
                   dialog.kind === "link"
                     ? (dialog.link?.id ?? dialog.operationId)
@@ -267,7 +280,7 @@ function ShortcutsPage() {
                 const existingLink = existingGroup?.links.find((link) => link.id === id);
                 if (dialog.kind === "link" && !dialog.link) {
                   const attempted = attemptedCreate.current;
-                  // Preserve server edits to fields unchanged since the original add attempt.
+                  // Preserve server edits to fields unchanged since the last possible save.
                   if (attempted && existingLink && existingGroup) {
                     if (name === attempted.name) name = existingLink.name;
                     if (url === attempted.url) url = existingLink.url;
@@ -277,7 +290,6 @@ function ShortcutsPage() {
                     )
                       group = existingGroup.id;
                   }
-                  if (!attempted) attemptedCreate.current = { name, url, groupSelectionVersion };
                 }
                 if (dialog.kind === "link" && dialog.link && existingLink && existingGroup) {
                   if (name === dialog.link.name) name = existingLink.name;
@@ -296,20 +308,24 @@ function ShortcutsPage() {
                 const groups = board.groups.length
                   ? board.groups
                   : [{ id: group, name: "미분류", collapsed: false, links: [] }];
-                await change({
-                  ...board,
-                  groups: groups.map((item) => {
-                    if (item.id !== group)
-                      return { ...item, links: item.links.filter((link) => link.id !== id) };
-                    const exists = item.links.some((link) => link.id === id);
-                    const links = exists
-                      ? item.links.map((link) => (link.id === id ? { id, name, url } : link))
-                      : [...item.links, { id, name, url }];
-                    return { ...item, links };
-                  }),
-                });
+                await change(
+                  {
+                    ...board,
+                    groups: groups.map((item) => {
+                      if (item.id !== group)
+                        return { ...item, links: item.links.filter((link) => link.id !== id) };
+                      const exists = item.links.some((link) => link.id === id);
+                      const links = exists
+                        ? item.links.map((link) => (link.id === id ? { id, name, url } : link))
+                        : [...item.links, { id, name, url }];
+                      return { ...item, links };
+                    }),
+                  },
+                  dialog.kind === "link" && !dialog.link ? submitted : undefined,
+                );
               }}
               onSaveGroup={async (name) => {
+                const submitted = { name };
                 const selected =
                   dialog.kind === "group"
                     ? (dialog.group ??
@@ -318,7 +334,6 @@ function ShortcutsPage() {
                 if (dialog.kind === "group" && !dialog.group) {
                   const attempted = attemptedCreate.current;
                   if (attempted && selected && name === attempted.name) name = selected.name;
-                  if (!attempted) attemptedCreate.current = { name };
                 }
                 if (selected?.name === name) return;
                 const groups = selected
@@ -329,7 +344,10 @@ function ShortcutsPage() {
                       ...board.groups,
                       { id: dialog.operationId, name, collapsed: false, links: [] },
                     ];
-                await change({ ...board, groups });
+                await change(
+                  { ...board, groups },
+                  dialog.kind === "group" && !dialog.group ? submitted : undefined,
+                );
               }}
               onDeleteGroup={async () => {
                 if (dialog.kind === "delete-group")
