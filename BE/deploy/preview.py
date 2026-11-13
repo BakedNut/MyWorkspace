@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from initialize import run, private_file
 
@@ -112,12 +113,18 @@ def deploy(root=None):
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise
     receipt = dict(commit=commit, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
-    private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
-    output = root / ".runtime/shortcuts-preview"
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (output / "deployment.json").write_text(json.dumps(receipt, indent=2))
-    (output / "deployment.json").chmod(0o600)
     print("Preview deployed", commit)
+    try:
+        private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
+    except Exception as error:
+        print(f"Warning: release {commit} is active; server deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+    try:
+        output = root / ".runtime/shortcuts-preview"
+        output.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (output / "deployment.json").write_text(json.dumps(receipt, indent=2))
+        (output / "deployment.json").chmod(0o600)
+    except Exception as error:
+        print(f"Warning: release {commit} is active; local deployment record write failed ({type(error).__name__}).", file=sys.stderr)
 
 
 if __name__ == "__main__":

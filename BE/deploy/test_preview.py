@@ -1,4 +1,6 @@
+import contextlib
 import hashlib
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -114,6 +116,30 @@ class PreviewDeploymentTest(unittest.TestCase):
             self.run.assert_any_call(200, ["systemctl", "is-active", "--quiet", service])
         self.assertEqual([call.args for call in self.ready.call_args_list], [(), (8088,)])
         self.private.assert_called_once()
+
+    def test_server_receipt_failure_reports_active_release_and_still_writes_local_receipt(self):
+        self.private.side_effect = OSError("disk full")
+        warnings = io.StringIO()
+        with contextlib.redirect_stderr(warnings):
+            preview.deploy(self.root)
+        self.assertIn("release commit is active; server deployment record write failed", warnings.getvalue())
+        self.assertTrue((self.root / ".runtime/shortcuts-preview/deployment.json").exists())
+        commands = [call.args[1] for call in self.run.call_args_list]
+        self.assertFalse(any(args[:3] == ["ln", "-s", self.old_jar] for args in commands))
+
+    def test_local_receipt_failure_reports_active_release_after_server_receipt_succeeds(self):
+        write_text = Path.write_text
+        def write(path, *args, **kwargs):
+            if path.name == "deployment.json":
+                raise PermissionError("read only")
+            return write_text(path, *args, **kwargs)
+        warnings = io.StringIO()
+        with patch.object(Path, "write_text", write), contextlib.redirect_stderr(warnings):
+            preview.deploy(self.root)
+        self.private.assert_called_once()
+        self.assertIn("release commit is active; local deployment record write failed", warnings.getvalue())
+        commands = [call.args[1] for call in self.run.call_args_list]
+        self.assertFalse(any(args[:3] == ["ln", "-s", self.old_jar] for args in commands))
 
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
