@@ -316,4 +316,71 @@ class ShortcutIntegrationTest {
           .isEqualTo(1);
     }
   }
+
+  @Test
+  void unchangedLegacyUrlDoesNotBlockUnrelatedSavesButCannotBeCopiedOrChangedToAnotherInvalidUrl()
+      throws Exception {
+    String invalid = "http://4294967296/";
+    docs.save("shortcuts", board(invalid));
+    var toggled =
+        new ShortcutBoard(
+            0,
+            List.of(
+                new ShortcutBoard.Group(
+                    "school",
+                    "학교",
+                    false,
+                    List.of(new ShortcutBoard.Link("portal", "이름 수정", invalid)))));
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(toggled)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.revision").value(1))
+        .andExpect(jsonPath("$.groups[0].collapsed").value(false))
+        .andExpect(jsonPath("$.groups[0].links[0].url").value(invalid));
+    var copied =
+        new ShortcutBoard(
+            1,
+            List.of(
+                new ShortcutBoard.Group(
+                    "school",
+                    "학교",
+                    false,
+                    List.of(new ShortcutBoard.Link("new-id", "복제", invalid)))));
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(copied)))
+        .andExpect(status().isBadRequest());
+    var changed =
+        new ShortcutBoard(
+            1,
+            List.of(
+                new ShortcutBoard.Group(
+                    "school",
+                    "학교",
+                    false,
+                    List.of(new ShortcutBoard.Link("portal", "수정", "http://4294967297/")))));
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(changed)))
+        .andExpect(status().isBadRequest());
+    var stale = new ShortcutBoard(0, changed.groups());
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(stale)))
+        .andExpect(status().isConflict());
+    assertThat(docs.read("shortcuts", ShortcutBoard.class).revision()).isEqualTo(1);
+  }
 }
