@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import io
+import http.server
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -175,6 +176,24 @@ class PreviewDeploymentTest(unittest.TestCase):
         preview.deploy(self.root)
         self.private.assert_called_once()
 
+    def test_missing_referenced_script_aborts_before_backup_and_server_operations(self):
+        (self.root / "FE/dist/index.html").write_text('<script type="module" src="/assets/missing.js"></script>')
+        with self.assertRaisesRegex(ValueError, "Referenced frontend asset is missing"):
+            preview.deploy(self.root)
+        self.run.assert_not_called()
+        self.backup.assert_not_called()
+        self.private.assert_not_called()
+
+    def test_frontend_content_verification_failure_rolls_back_before_receipt(self):
+        def run(ct, args, data=None):
+            if args[0] == "python3" and len(args) == 5 and args[3] == preview.WEB_URL:
+                raise subprocess.CalledProcessError(1, args)
+            return self.server_run(ct, args, data)
+        self.run.side_effect = run
+        with self.assertRaises(subprocess.CalledProcessError):
+            preview.deploy(self.root)
+        self.assert_restored()
+
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
@@ -194,6 +213,52 @@ class PreviewReadinessTest(unittest.TestCase):
                 self.assertFalse(preview.ready(8088))
         with patch.object(preview, "run", side_effect=subprocess.CalledProcessError(22, "curl")), patch.object(preview.time, "sleep"):
             self.assertFalse(preview.ready(8088))
+
+
+class FrontendVerificationTest(unittest.TestCase):
+    def test_manifest_checks_local_references_and_includes_all_built_scripts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dist = Path(directory)
+            (dist / "assets").mkdir()
+            (dist / "index.html").write_text('<script src="./assets/app.js?v=1"></script><link rel="stylesheet" href="/assets/app.css">')
+            (dist / "assets/app.js").write_text('console.log("ready")')
+            (dist / "assets/app.css").write_text('body { color: blue }')
+            manifest = preview.frontend_manifest(dist)
+            self.assertIn("/", manifest)
+            self.assertIn("/assets/app.js?v=1", manifest)
+            self.assertIn("/assets/app.js", manifest)
+            self.assertIn("/assets/app.css", manifest)
+            self.assertEqual(manifest["/assets/app.js"], hashlib.sha256((dist / "assets/app.js").read_bytes()).hexdigest())
+
+    def test_web_page_and_script_must_be_served_with_expected_content(self):
+        bodies = {"/": b'<script src="/assets/app.js"></script>', "/assets/app.js": b'console.log("ready")'}
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                content = bodies.get(self.path)
+                self.send_response(200 if content is not None else 404)
+                self.end_headers()
+                self.wfile.write(content or b"missing")
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        expected = {path: hashlib.sha256(body).hexdigest() for path, body in bodies.items()}
+        def local_run(ct, args, data=None):
+            return subprocess.run(args, input=data, text=True, capture_output=True, check=True).stdout
+        try:
+            with patch.object(preview, "WEB_URL", f"http://127.0.0.1:{server.server_port}"), patch.object(preview, "run", side_effect=local_run):
+                preview.verify_frontend(expected)
+                del bodies["/assets/app.js"]
+                with self.assertRaises(subprocess.CalledProcessError):
+                    preview.verify_frontend(expected)
+                bodies["/assets/app.js"] = bodies["/"]
+                with self.assertRaises(subprocess.CalledProcessError):
+                    preview.verify_frontend(expected)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

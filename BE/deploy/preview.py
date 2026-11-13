@@ -1,5 +1,7 @@
 """Update the already provisioned LXC preview while preserving its data and config."""
 from pathlib import Path
+from html.parser import HTMLParser
+from urllib.parse import unquote, urljoin, urlsplit
 import datetime
 import gzip
 import fcntl
@@ -11,6 +13,7 @@ import time
 from initialize import run, private_file
 
 
+WEB_URL = "http://127.0.0.1:8088"
 LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
@@ -26,6 +29,49 @@ def ready(port=8081):
             pass
         time.sleep(1)
     return False
+
+
+class FrontendAssets(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == "script" and attrs.get("src"):
+            self.urls.append(attrs["src"])
+        if tag == "link" and attrs.get("rel") in ("modulepreload", "stylesheet") and attrs.get("href"):
+            self.urls.append(attrs["href"])
+
+
+def frontend_manifest(dist):
+    dist = dist.resolve()
+    index = dist / "index.html"
+    parser = FrontendAssets()
+    parser.feed(index.read_text())
+    files = {"/": index}
+    for reference in parser.urls:
+        url = urlsplit(urljoin("/", reference))
+        if url.scheme or url.netloc:
+            continue
+        path = (dist / unquote(url.path).lstrip("/")).resolve()
+        if not path.is_relative_to(dist) or not path.is_file():
+            raise ValueError("Referenced frontend asset is missing: " + reference)
+        files[url.path + ("?" + url.query if url.query else "")] = path
+    for path in dist.rglob("*"):
+        if path.is_file() and path.suffix in (".js", ".css"):
+            files["/" + path.relative_to(dist).as_posix()] = path
+    return {url: hashlib.sha256(path.read_bytes()).hexdigest() for url, path in files.items()}
+
+
+def verify_frontend(expected):
+    program = """import hashlib,json,sys,urllib.request
+for path,digest in json.loads(sys.argv[2]).items():
+    with urllib.request.urlopen(sys.argv[1]+path,timeout=5) as response:
+        if hashlib.sha256(response.read()).hexdigest()!=digest:
+            raise RuntimeError('Served frontend content mismatch: '+path)
+"""
+    run(200, ["python3", "-c", program, WEB_URL, json.dumps(expected)])
 
 
 def backup(stamp):
@@ -87,6 +133,7 @@ def _deploy(root=None):
     dist = root / "FE/dist"
     if not jar.is_file() or not (dist / "index.html").is_file():
         raise ValueError("Build BE and FE before updating the preview")
+    expected_frontend = frontend_manifest(dist)
     previous_jar = run(200, ["readlink", JAR]).strip()
     previous_frontend = run(200, ["readlink", FRONTEND]).strip()
     if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
@@ -119,6 +166,7 @@ def _deploy(root=None):
         replace(frontend, FRONTEND, stamp)
         if not ready(8088):
             raise RuntimeError("Preview web endpoint did not become ready")
+        verify_frontend(expected_frontend)
     except BaseException as error:
         failures = restore(previous_jar, previous_frontend, stamp)
         if failures:
