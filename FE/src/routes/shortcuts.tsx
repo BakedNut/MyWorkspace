@@ -33,6 +33,7 @@ function ShortcutsPage() {
   const fallbackFocus = useRef<HTMLButtonElement | null>(null);
   const editingBase = useRef<Board | null>(null);
   const deletedLinkIds = useRef(new Set<string>());
+  const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
   const attemptedCreate = useRef<{
@@ -95,6 +96,7 @@ function ShortcutsPage() {
                   setDraft(null);
                   editingBase.current = null;
                   deletedLinkIds.current.clear();
+                  automaticLinkGroups.current.clear();
                   setConflict(false);
                   mutation.reset();
                 }}
@@ -119,6 +121,7 @@ function ShortcutsPage() {
                           draft,
                           latest,
                           deletedLinkIds.current,
+                          automaticLinkGroups.current,
                         ),
                       );
                       editingBase.current = structuredClone(latest);
@@ -130,6 +133,7 @@ function ShortcutsPage() {
                     setDraft(null);
                     editingBase.current = null;
                     deletedLinkIds.current.clear();
+                    automaticLinkGroups.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
                   }
@@ -149,6 +153,7 @@ function ShortcutsPage() {
                   mutation.reset();
                   editingBase.current = structuredClone(board!);
                   deletedLinkIds.current.clear();
+                  automaticLinkGroups.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));
                 }}

@@ -182,12 +182,19 @@ export function reconcileShortcutBoard(
   draft: ShortcutBoard,
   latest: ShortcutBoard,
   deletedLinkIds: ReadonlySet<string> = new Set(),
+  automaticLinkGroups: Map<string, string> = new Map(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
   const baseLinks = links(base);
   const latestLinks = links(latest);
-  const mergedLinks = mergeShortcutItems(baseLinks, links(draft), latestLinks).filter(
+  const draftLinks = links(draft);
+  // Fallback placement is the comparison baseline until the next explicit move.
+  const comparisonLinks = baseLinks.map((link) => ({
+    ...link,
+    groupId: automaticLinkGroups.get(link.id) ?? link.groupId,
+  }));
+  const mergedLinks = mergeShortcutItems(comparisonLinks, draftLinks, latestLinks).filter(
     (link) => !deletedLinkIds.has(link.id),
   );
   for (const saved of latestLinks) {
@@ -214,6 +221,8 @@ export function reconcileShortcutBoard(
         latest.groups.some((saved) => saved.id === group.id),
     )
     .map((group) => ({ ...group, links: [] }));
+  // Replace prior fallback placements with those produced by this merge.
+  automaticLinkGroups.clear();
   // A concurrent move or addition must survive deletion of its destination group.
   for (const link of mergedLinks) {
     if (groups.some((group) => group.id === link.groupId)) continue;
@@ -227,6 +236,10 @@ export function reconcileShortcutBoard(
       groups.push(destination);
     }
     link.groupId = destination.id;
+    const edited = draftLinks.find((item) => item.id === link.id);
+    const before = comparisonLinks.find((item) => item.id === link.id);
+    if (!edited || edited.groupId === before?.groupId)
+      automaticLinkGroups.set(link.id, destination.id);
   }
   return {
     revision: latest.revision,

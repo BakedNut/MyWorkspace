@@ -507,3 +507,69 @@ it("빈 화면도 저장 중 추가를 비활성화해 새 초안의 유실을 �
   fireEvent.click(add);
   expect(screen.getByRole("dialog", { name: "바로가기 추가" })).toBeInTheDocument();
 });
+
+it.each(["unchanged", "name", "group"])(
+  "반복 충돌에서 자동 배치와 이후 직접 편집을 구분한다 %s",
+  async (edit) => {
+    const original: ShortcutBoard = {
+      revision: 1,
+      groups: ["a", "b", "c"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    };
+    let persisted = structuredClone(original);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        persisted.groups[0]!.links.push({
+          id: "x",
+          name: "원격 추가",
+          url: "https://example.com/x",
+        });
+        persisted.revision++;
+      } else if (calls === 2) {
+        persisted.groups[0]!.links = [];
+        persisted.revision++;
+      } else {
+        persisted = { ...structuredClone(input), revision: input.revision + 1 };
+        return persisted;
+      }
+      throw new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT");
+    });
+    setup();
+    await screen.findByRole("button", { name: "a 0" });
+    fireEvent.click(screen.getByRole("button", { name: "정리" }));
+    fireEvent.click(screen.getByRole("button", { name: "a 분류 삭제" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "원격 추가 바로가기 수정" });
+    if (edit !== "unchanged") {
+      fireEvent.click(screen.getByRole("button", { name: "원격 추가 바로가기 수정" }));
+      const modal = screen.getByRole("dialog");
+      if (edit === "name")
+        fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "직접 수정" } });
+      else fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "c" } });
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    }
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "저장" });
+    const links = screen.queryAllByRole("button", { name: /바로가기 수정$/ });
+    expect(links).toHaveLength(edit === "unchanged" ? 0 : 1);
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await screen.findByRole("button", { name: "정리" });
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(persisted.groups.map((group) => group.id)).toEqual(["b", "c"]);
+    if (edit === "unchanged") expect(persisted.groups.flatMap((group) => group.links)).toEqual([]);
+    else {
+      const destination = persisted.groups.find(
+        (group) => group.id === (edit === "group" ? "c" : "b"),
+      )!;
+      expect(destination.links[0]!.name).toBe(edit === "name" ? "직접 수정" : "원격 추가");
+    }
+  },
+);
+

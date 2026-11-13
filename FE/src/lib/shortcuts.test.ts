@@ -324,3 +324,52 @@ it("개별 링크 삭제 후 원래 분류를 삭제해도 개별 삭제 의도�
     reconcileShortcutBoard(latest, result, next, deleted).groups.flatMap((group) => group.links),
   ).toEqual([]);
 });
+
+it.each(["unchanged", "name", "url", "group"])(
+  "자동 배치 후 반복 병합은 실제로 편집한 링크만 원격 삭제보다 우선한다 %s",
+  (edit) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: ["a", "b", "c"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    };
+    const draft = structuredClone(base);
+    draft.groups.shift();
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, string>();
+    const merged = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+    expect(placements.get("x")).toBe("b");
+    if (edit === "name") merged.groups[0]!.links[0]!.name = "직접 수정";
+    if (edit === "url") merged.groups[0]!.links[0]!.url = "https://example.com/edited";
+    const local = edit === "group" ? moveShortcut(merged, "x", "c") : merged;
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(latest, local, removed, new Set(), placements);
+    expect(next.groups.flatMap((group) => group.links)).toHaveLength(edit === "unchanged" ? 0 : 1);
+    expect(placements.size).toBe(0);
+  },
+);
+
+it("명시적인 이동의 대상이 사라져 자동 배치해도 직접 이동 의도를 유지한다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ["a", "b", "c"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  };
+  base.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+  const draft = moveShortcut(base, "x", "c");
+  draft.groups = draft.groups.filter((group) => group.id !== "a");
+  const latest = structuredClone(base);
+  latest.groups.pop();
+  latest.revision++;
+  const placements = new Map<string, string>();
+  const merged = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+  expect(merged.groups[0]!.id).toBe("b");
+  expect(placements.size).toBe(0);
+  const removed = structuredClone(latest);
+  removed.groups[0]!.links = [];
+  removed.revision++;
+  const next = reconcileShortcutBoard(latest, merged, removed, new Set(), placements);
+  expect(next.groups[0]!.links[0]!.id).toBe("x");
+});
