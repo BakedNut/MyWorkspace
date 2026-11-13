@@ -111,7 +111,12 @@ class ShortcutIntegrationTest {
             "//example.com",
             "https://user:password@example.com",
             "https://",
-            "http://example.com:99999"))
+            "http://example.com:99999",
+            "http://4294967296/",
+            "http://0x100000000/",
+            "http://09/",
+            "http://test.42/",
+            "http://[fe80::1%25eth0]/"))
       mvc.perform(
               put("/api/shortcuts")
                   .with(trusted)
@@ -240,6 +245,7 @@ class ShortcutIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(content().bytes(new byte[] {9}));
   }
+
   @Test
   void removedIconsReplaceExpiredImagesWithANegativeCache() throws Exception {
     docs.save("shortcuts", board("https://example.com/"));
@@ -252,10 +258,30 @@ class ShortcutIntegrationTest {
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
     while (jdbc.queryForObject("select checked_at from shortcut_icon", Long.class) == 0
         && System.nanoTime() < deadline) Thread.sleep(10);
-    assertThat(jdbc.queryForObject("select checked_at from shortcut_icon", Long.class)).isPositive();
+    assertThat(jdbc.queryForObject("select checked_at from shortcut_icon", Long.class))
+        .isPositive();
     assertThat(jdbc.queryForObject("select image_bytes from shortcut_icon", byte[].class)).isNull();
     assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS)).isNull();
     verify(fetcher, times(2)).fetch(URI.create("https://example.com/"));
   }
 
+  @Test
+  void keepsBrowserCompatibleNumericAndIpv6Hosts() throws Exception {
+    for (String url :
+        List.of(
+            "http://4294967295/",
+            "http://0xffffffff/",
+            "http://017777777777/",
+            "http://[::1]:8080/",
+            "http://192.168.1.200/")) {
+      docs.save("shortcuts", new ShortcutBoard(0, List.of()));
+      mvc.perform(
+              put("/api/shortcuts")
+                  .with(trusted)
+                  .with(csrf())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(json.writeValueAsString(board(url))))
+          .andExpect(status().isOk());
+    }
+  }
 }

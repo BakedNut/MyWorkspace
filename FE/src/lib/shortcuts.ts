@@ -19,6 +19,22 @@ export function normalizeShortcutUrl(input: string): string {
   return url.href;
 }
 
+export function parseShortcutUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      /\p{Cc}/u.test(value)
+    )
+      return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 // Apply changed pair orders first, then preserve compatible saved order constraints.
 function mergeShortcutOrder(
   base: string[],

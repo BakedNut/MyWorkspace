@@ -187,3 +187,30 @@ it("추가 도중 선택한 분류가 삭제돼도 이름·URL을 유지하고 �
   expect(save.mock.calls[1]![0].revision).toBe(5);
   expect(save.mock.calls[1]![0].groups[0]!.id).toBe("remaining");
 });
+
+it("기존 잘못된 URL이 접힌 분류에 있어도 다른 항목을 표시하고 수정할 수 있다", async () => {
+  const saved = structuredClone(initial);
+  saved.groups[0]!.links.push({ id: "invalid", name: "오류 주소", url: "http://4294967296/" });
+  saved.groups[0]!.collapsed = true;
+  vi.mocked(api.shortcuts.get).mockResolvedValue(saved);
+  vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => ({
+    ...input,
+    revision: input.revision + 1,
+  }));
+  setup();
+  await screen.findByRole("button", { name: "개발 3" });
+  fireEvent.click(screen.getByRole("button", { name: "개발 3" }));
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  expect(screen.queryByRole("link", { name: "오류 주소 새 탭에서 열기" })).not.toBeInTheDocument();
+  expect(screen.getByText("잘못된 주소 · 정리에서 수정하세요.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "오류 주소 바로가기 수정" }));
+  fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://example.com/" } });
+  fireEvent.click(screen.getByRole("button", { name: "완료" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  expect(await screen.findByRole("link", { name: "오류 주소 새 탭에서 열기" })).toHaveAttribute(
+    "href",
+    "https://example.com/",
+  );
+});

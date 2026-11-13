@@ -112,3 +112,10 @@ it("128KiB 이하 보드는 기존 API로 전송한다", async () => {
     expect.objectContaining({ method: "PUT", body: JSON.stringify(input) }),
   );
 });
+
+it.each(["http://4294967296/", "http://09/", "http://[fe80::1%25eth0]/", "javascript:alert(1)"])(
+  "기존 잘못된 URL은 아이콘 요청에서 개별 제외한다 %s",
+  (url) => {
+    expect(restApi.shortcuts.iconUrl({ id: "bad", name: "오류", url })).toBeNull();
+  },
+);

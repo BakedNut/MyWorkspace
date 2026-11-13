@@ -23,7 +23,7 @@ import { ChevronDown, ExternalLink, Folder, GripVertical, Pencil, Trash2 } from 
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { ShortcutIcon } from "@/components/ShortcutIcon";
-import { moveShortcut } from "@/lib/shortcuts";
+import { moveShortcut, parseShortcutUrl } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import type { ShortcutBoard as Board, ShortcutGroup, ShortcutLink } from "@/types/domain";
 
@@ -311,13 +311,14 @@ function LinkCard({
     data: { kind: "link", linkId: link.id, groupId, name: link.name },
     disabled: !editing || busy,
   });
+  const site = parseShortcutUrl(link.url);
   const content = (
     <>
       <ShortcutIcon key={link.url} link={link} />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{link.name}</span>
         <span className="mt-1 block truncate text-xs text-muted-foreground">
-          {new URL(link.url).host}
+          {site?.host ?? "잘못된 주소 · 정리에서 수정하세요."}
         </span>
       </span>
     </>
@@ -374,7 +375,7 @@ function LinkCard({
             </Button>
           </div>
         </>
-      ) : (
+      ) : site ? (
         <a
           href={link.url}
           target="_blank"
@@ -385,6 +386,8 @@ function LinkCard({
           {content}
           <ExternalLink aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         </a>
+      ) : (
+        <div className="flex min-w-0 items-center gap-3 rounded-xl p-4">{content}</div>
       )}
     </li>
   );

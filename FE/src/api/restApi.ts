@@ -1,3 +1,4 @@
+import { parseShortcutUrl } from "@/lib/shortcuts";
 import type { ApiClient } from "./client";
 import { ApiError } from "./client";
 
@@ -53,8 +54,12 @@ export async function request<T>(
 
 export const restApi: ApiClient = {
   shortcuts: {
-    iconUrl: (link) =>
-      `/api/shortcuts/icons/${encodeURIComponent(link.id)}?site=${encodeURIComponent(new URL(link.url).origin)}`,
+    iconUrl: (link) => {
+      const site = parseShortcutUrl(link.url);
+      return site
+        ? `/api/shortcuts/icons/${encodeURIComponent(link.id)}?site=${encodeURIComponent(site.origin)}`
+        : null;
+    },
     get: () => request("/shortcuts"),
     async save(input) {
       // Match client_max_body_size in FE/deploy/nginx.conf before sending the full board.

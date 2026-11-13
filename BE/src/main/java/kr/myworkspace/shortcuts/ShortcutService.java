@@ -41,6 +41,7 @@ class ShortcutService {
                                       ("https".equalsIgnoreCase(uri.getScheme())
                                               || "http".equalsIgnoreCase(uri.getScheme()))
                                           && uri.getHost() != null
+                                          && browserHost(uri.getHost())
                                           && uri.getRawUserInfo() == null
                                           && uri.getPort() >= -1
                                           && uri.getPort() <= 65535,
@@ -63,6 +64,42 @@ class ShortcutService {
     var saved = new ShortcutBoard(current.revision() + 1, groups);
     docs.write(document, saved);
     return saved;
+  }
+
+  // Match the URL Standard's numeric-host bounds without resolving the address.
+  private boolean browserHost(String host) {
+    if (host.contains("%")) return false;
+    String[] parts = host.replaceFirst("\\.$", "").split("\\.", -1);
+    String last = parts[parts.length - 1];
+    if (!last.matches("[0-9]+|0[xX][0-9a-fA-F]*")) return true;
+    if (parts.length > 4) return false;
+    for (int index = 0; index < parts.length; index++) {
+      String digits = parts[index];
+      if (digits.isEmpty()) return false;
+      int radix = 10;
+      if (digits.matches("0[xX].*")) {
+        digits = digits.substring(2);
+        radix = 16;
+      } else if (digits.length() > 1 && digits.startsWith("0")) {
+        digits = digits.substring(1);
+        radix = 8;
+      }
+      String pattern =
+          switch (radix) {
+            case 16 -> "[0-9a-fA-F]*";
+            case 8 -> "[0-7]*";
+            default -> "[0-9]*";
+          };
+      if (!digits.matches(pattern)) return false;
+      try {
+        long number = digits.isEmpty() ? 0 : Long.parseLong(digits, radix);
+        long limit = index < parts.length - 1 ? 256 : 1L << (8 * (5 - parts.length));
+        if (number >= limit) return false;
+      } catch (NumberFormatException error) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private String name(String input) {
