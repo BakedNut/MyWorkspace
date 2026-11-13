@@ -283,8 +283,8 @@ class FrontendVerificationTest(unittest.TestCase):
                 preview.verify_frontend(expected)
 
     def test_same_origin_redirects_preserve_content_and_media_validation(self):
-        with self.served_frontend({"/start": "/middle", "/middle": "/assets/app.js"}) as (bodies, media, expected):
-            asset = {"/start": expected["/assets/app.js"]}
+        with self.served_frontend({"/assets/start": "/assets/middle", "/assets/middle": "/assets/app.js"}) as (bodies, media, expected):
+            asset = {"/assets/start": expected["/assets/app.js"]}
             preview.verify_frontend(asset)
             media["/assets/app.js"] = "text/plain"
             with self.assertRaises(subprocess.CalledProcessError):
@@ -293,6 +293,23 @@ class FrontendVerificationTest(unittest.TestCase):
             bodies["/assets/app.js"] = b"wrong content"
             with self.assertRaises(subprocess.CalledProcessError):
                 preview.verify_frontend(asset)
+
+    def test_redirects_must_preserve_relative_dependency_directory(self):
+        redirects = {"/assets/app.js": "/alternate/app.js",
+                     "/assets/app.css": "/alternate/app.css", "/": "/alternate/index.html"}
+        with self.served_frontend(redirects) as (bodies, media, expected):
+            for path, destination in redirects.items():
+                bodies[destination] = bodies[path]
+                media[destination] = media[path]
+                with self.subTest(path=path), self.assertRaises(subprocess.CalledProcessError):
+                    preview.verify_frontend({path: expected[path]})
+            # A temporary directory change is rejected even if the final URL returns.
+            redirects["/assets/app.js"] = "/alternate/start.js"
+            redirects["/alternate/start.js"] = "/assets/final.js"
+            bodies["/assets/final.js"] = bodies["/assets/app.js"]
+            media["/assets/final.js"] = media["/assets/app.js"]
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend({"/assets/app.js": expected["/assets/app.js"]})
 
     def test_local_assets_reject_cross_origin_redirects(self):
         with self.served_frontend() as (bodies, media, expected):
@@ -314,8 +331,8 @@ class FrontendVerificationTest(unittest.TestCase):
                     for path in ("/", "/assets/app.js", "/assets/app.css", "/entry"):
                         with self.subTest(path=path), self.assertRaises(subprocess.CalledProcessError):
                             preview.verify_frontend({path: expected[path]})
-                    redirects["/assets/app.js"] = "/same-origin"
-                    redirects["/same-origin"] = target + "/assets/app.js"
+                    redirects["/assets/app.js"] = "/assets/same-origin"
+                    redirects["/assets/same-origin"] = target + "/assets/app.js"
                     with self.assertRaises(subprocess.CalledProcessError):
                         preview.verify_frontend({"/assets/app.js": expected["/assets/app.js"]})
             finally:

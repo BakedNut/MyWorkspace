@@ -81,6 +81,10 @@ class SameOriginRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,request,fp,code,message,headers,new_url):
         if origin(request.full_url)!=origin(new_url):
             raise RuntimeError('Cross-origin frontend redirect: '+request.full_url)
+        current_directory = urllib.parse.urlsplit(urllib.parse.urljoin(request.full_url,'.')).path
+        next_directory = urllib.parse.urlsplit(urllib.parse.urljoin(new_url,'.')).path
+        if current_directory!=next_directory:
+            raise RuntimeError('Frontend redirect changes relative dependency directory: '+request.full_url)
         return super().redirect_request(request,fp,code,message,headers,new_url)
 
 opener = urllib.request.build_opener(SameOriginRedirect())
