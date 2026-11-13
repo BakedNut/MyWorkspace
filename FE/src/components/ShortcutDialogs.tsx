@@ -43,6 +43,9 @@ export function ShortcutDialog({
   const [groupId, setGroupId] = useState(
     target.kind === "link" ? (target.groupId ?? groups[0]?.id ?? "") : "",
   );
+  const selectedGroupId = groups.some((group) => group.id === groupId)
+    ? groupId
+    : (groups[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const deleting = target.kind === "delete-group";
@@ -87,7 +90,11 @@ export function ShortcutDialog({
                 if (!name.trim() || /\p{Cc}/u.test(name))
                   throw new Error("이름을 줄바꿈 없이 입력하세요.");
                 if (target.kind === "link")
-                  await onSaveLink({ name: name.trim(), url: normalizeShortcutUrl(url), groupId });
+                  await onSaveLink({
+                    name: name.trim(),
+                    url: normalizeShortcutUrl(url),
+                    groupId: selectedGroupId,
+                  });
                 else await onSaveGroup(name.trim());
               }
               onClose();
@@ -133,7 +140,7 @@ export function ShortcutDialog({
                     <Label htmlFor={`${uid}-group`}>분류</Label>
                     <select
                       id={`${uid}-group`}
-                      value={groupId}
+                      value={selectedGroupId}
                       onChange={(event) => setGroupId(event.target.value)}
                       className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm"
                     >

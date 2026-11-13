@@ -154,3 +154,36 @@ it("수정 완료 시 실행 버튼으로, 분류 삭제 시 대체 버튼으로
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "분류 추가" })).toHaveFocus());
 });
+
+it("추가 도중 선택한 분류가 삭제돼도 이름·URL을 유지하고 남은 분류로 저장한다", async () => {
+  const original = {
+    ...structuredClone(initial),
+    groups: [
+      ...structuredClone(initial.groups),
+      { id: "remaining", name: "남은 분류", collapsed: false, links: [] },
+    ],
+  };
+  const latest: ShortcutBoard = { revision: 5, groups: [original.groups[1]!] };
+  vi.mocked(api.shortcuts.get).mockResolvedValueOnce(original).mockResolvedValue(latest);
+  const save = vi
+    .spyOn(api.shortcuts, "save")
+    .mockRejectedValueOnce(new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT"))
+    .mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "추가" }));
+  const modal = screen.getByRole("dialog");
+  fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "입력 보존" } });
+  fireEvent.change(within(modal).getByLabelText("URL"), {
+    target: { value: "https://example.com/" },
+  });
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await within(modal).findByRole("alert");
+  await waitFor(() => expect(within(modal).getByLabelText("분류")).toHaveValue("remaining"));
+  expect(within(modal).getByLabelText("이름")).toHaveValue("입력 보존");
+  expect(within(modal).getByLabelText("URL")).toHaveValue("https://example.com/");
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await screen.findByRole("link", { name: "입력 보존 새 탭에서 열기" });
+  expect(save.mock.calls[1]![0].revision).toBe(5);
+  expect(save.mock.calls[1]![0].groups[0]!.id).toBe("remaining");
+});
