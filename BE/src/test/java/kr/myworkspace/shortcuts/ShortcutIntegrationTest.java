@@ -112,6 +112,12 @@ class ShortcutIntegrationTest {
             "https://user:password@example.com",
             "https://",
             "http://example.com:99999",
+            "https://foo_bar/",
+            "https://-host/",
+            "https://host-/",
+            "https://example.1a/",
+            "https://foo..bar/",
+            "https://example.com/a[b]",
             "http://4294967296/",
             "http://0x100000000/",
             "http://09/",
@@ -382,5 +388,24 @@ class ShortcutIntegrationTest {
                 .content(json.writeValueAsString(stale)))
         .andExpect(status().isConflict());
     assertThat(docs.read("shortcuts", ShortcutBoard.class).revision()).isEqualTo(1);
+  }
+
+  @Test
+  void acceptsBrowserUrlsEncodedForTheUriWireFormat() throws Exception {
+    for (String url :
+        List.of(
+            "https://example.com/a%5Bb%5D",
+            "http://[2001:db8::1]/a%5Bb%5D",
+            "https://example.com/%25zz?q=%5Bx%5D%7Cy#x%5By%5D%23z")) {
+      docs.save("shortcuts", new ShortcutBoard(0, List.of()));
+      mvc.perform(
+              put("/api/shortcuts")
+                  .with(trusted)
+                  .with(csrf())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(json.writeValueAsString(board(url))))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.groups[0].links[0].url").value(url));
+    }
   }
 }

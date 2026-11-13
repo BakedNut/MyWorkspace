@@ -1,6 +1,13 @@
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ShortcutBoard } from "@/types/domain";
 
+// Java URI rejects some characters that the browser URL parser preserves.
+function encodeShortcutUriPart(value: string): string {
+  return value
+    .replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@/%?]/gu, (character) => encodeURIComponent(character))
+    .replace(/%(?![0-9a-f]{2})/gi, "%25");
+}
+
 export function normalizeShortcutUrl(input: string): string {
   const value = input.trim();
   if (!value || value.length > 2048 || /\p{Cc}/u.test(value))
@@ -15,6 +22,19 @@ export function normalizeShortcutUrl(input: string): string {
   }
   if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password)
     throw new Error("http 또는 https 사이트 주소를 입력하세요.");
+  if (!url.hostname.startsWith("[")) {
+    const host = url.hostname.replace(/\.$/, "");
+    const labels = host.split(".");
+    const ipv4 = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+    if (
+      !labels.every((label) => /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(label)) ||
+      (labels.length > 1 && !ipv4 && !/^[a-z]/i.test(labels[labels.length - 1]!))
+    )
+      throw new Error("사이트의 호스트 주소를 확인하세요.");
+  }
+  url.pathname = encodeShortcutUriPart(url.pathname);
+  url.search = encodeShortcutUriPart(url.search);
+  if (url.hash) url.hash = "#" + encodeShortcutUriPart(url.hash.slice(1));
   if (url.href.length > 2048) throw new Error("URL은 2048자까지 입력할 수 있습니다.");
   return url.href;
 }

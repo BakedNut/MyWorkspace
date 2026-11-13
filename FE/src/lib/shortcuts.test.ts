@@ -285,3 +285,25 @@ it("이동한 링크의 대상 분류까지 삭제됐다면 남은 분류로 보
   expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
   expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
 });
+
+it.each([
+  ["https://example.com/a[b]", "https://example.com/a%5Bb%5D"],
+  ["http://[2001:db8::1]/a[b]", "http://[2001:db8::1]/a%5Bb%5D"],
+  ["https://example.com/a%2Fb?x=%5B", "https://example.com/a%2Fb?x=%5B"],
+  [
+    "https://example.com/%zz?q=[x]|y#x[y]#z",
+    "https://example.com/%25zz?q=%5Bx%5D%7Cy#x%5By%5D%23z",
+  ],
+])("브라우저 URL을 API URI에서도 처리 가능한 형식으로 정규화한다 %s", (input, expected) => {
+  expect(normalizeShortcutUrl(input)).toBe(expected);
+});
+
+it.each([
+  "https://foo_bar/",
+  "https://-host/",
+  "https://host-/",
+  "https://example.1a/",
+  "https://foo..bar/",
+])("API에서 표현할 수 없는 호스트는 추가 전에 거부한다 %s", (url) => {
+  expect(() => normalizeShortcutUrl(url)).toThrow("호스트 주소");
+});
