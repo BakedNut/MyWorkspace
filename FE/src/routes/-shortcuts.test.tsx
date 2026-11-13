@@ -666,3 +666,38 @@ it.each(
     }
   },
 );
+
+it("유일한 분류를 임시 복원한 뒤 링크가 원격 삭제돼도 분류 삭제 의도를 유지한다", async () => {
+  const original: ShortcutBoard = {
+    revision: 1,
+    groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+  };
+  let persisted = structuredClone(original);
+  vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+  let calls = 0;
+  vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+    calls++;
+    if (calls < 3) {
+      persisted.groups[0]!.links =
+        calls === 1 ? [{ id: "x", name: "원격 추가", url: "https://example.com/" }] : [];
+      persisted.revision++;
+      throw new ApiError("다른 곳", "CONFLICT");
+    }
+    persisted = { ...structuredClone(input), revision: input.revision + 1 };
+    return persisted;
+  });
+  setup();
+  await screen.findByRole("button", { name: "A 0" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "A 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  for (let round = 0; round < 2; round++) {
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "저장" });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "정리" });
+  expect(persisted.groups).toEqual([]);
+});

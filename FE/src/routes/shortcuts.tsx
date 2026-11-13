@@ -33,6 +33,7 @@ function ShortcutsPage() {
   const fallbackFocus = useRef<HTMLButtonElement | null>(null);
   const editingBase = useRef<Board | null>(null);
   const deletedLinkIds = useRef(new Set<string>());
+  const deletedGroupIds = useRef(new Set<string>());
   const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
@@ -108,6 +109,7 @@ function ShortcutsPage() {
                   setDraft(null);
                   editingBase.current = null;
                   deletedLinkIds.current.clear();
+                  deletedGroupIds.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   mutation.reset();
@@ -134,6 +136,7 @@ function ShortcutsPage() {
                           latest,
                           deletedLinkIds.current,
                           automaticLinkGroups.current,
+                          deletedGroupIds.current,
                         ),
                       );
                       editingBase.current = structuredClone(latest);
@@ -145,6 +148,7 @@ function ShortcutsPage() {
                     setDraft(null);
                     editingBase.current = null;
                     deletedLinkIds.current.clear();
+                    deletedGroupIds.current.clear();
                     automaticLinkGroups.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
@@ -165,6 +169,7 @@ function ShortcutsPage() {
                   mutation.reset();
                   editingBase.current = structuredClone(board!);
                   deletedLinkIds.current.clear();
+                  deletedGroupIds.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));
@@ -350,11 +355,13 @@ function ShortcutsPage() {
                 );
               }}
               onDeleteGroup={async () => {
-                if (dialog.kind === "delete-group")
+                if (dialog.kind === "delete-group") {
+                  deletedGroupIds.current.add(dialog.group.id);
                   await change({
                     ...board,
                     groups: board.groups.filter((group) => group.id !== dialog.group.id),
                   });
+                }
               }}
             />
           )}

@@ -373,3 +373,42 @@ it("명시적인 이동의 대상이 사라져 자동 배치해도 직접 이동
   const next = reconcileShortcutBoard(latest, merged, removed, new Set(), placements);
   expect(next.groups[0]!.links[0]!.id).toBe("x");
 });
+
+it.each([false, true])(
+  "임시 복원한 분류는 삭제 의도를 유지하며 남은 링크에만 필요하다 %s",
+  (addLocalLink) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(restored.groups[0]!.links[0]!.id).toBe("x");
+    if (addLocalLink)
+      restored.groups[0]!.links.push({ id: "y", name: "Y", url: "https://example.com/Y" });
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      restored,
+      removed,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(next.groups).toHaveLength(addLocalLink ? 1 : 0);
+    if (addLocalLink) expect(next.groups[0]!.links.map((link) => link.id)).toEqual(["y"]);
+  },
+);

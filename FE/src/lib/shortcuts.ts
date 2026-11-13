@@ -183,6 +183,7 @@ export function reconcileShortcutBoard(
   latest: ShortcutBoard,
   deletedLinkIds: ReadonlySet<string> = new Set(),
   automaticLinkGroups: Map<string, string> = new Map(),
+  deletedGroupIds: ReadonlySet<string> = new Set(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
@@ -217,8 +218,9 @@ export function reconcileShortcutBoard(
   )
     .filter(
       (group) =>
-        !base.groups.some((original) => original.id === group.id) ||
-        latest.groups.some((saved) => saved.id === group.id),
+        !deletedGroupIds.has(group.id) &&
+        (!base.groups.some((original) => original.id === group.id) ||
+          latest.groups.some((saved) => saved.id === group.id)),
     )
     .map((group) => ({ ...group, links: [] }));
   // Replace prior fallback placements with those produced by this merge.
