@@ -208,3 +208,20 @@ it("4개 항목의 모든 편집 조합에서 양쪽이 바꾼 상대 순서를 
     }
   }
 });
+
+it("새 항목 삽입이 다른 탭에서 이미 바꾼 기존 항목의 상대 순서를 덮어쓰지 않는다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ["a", "b"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  };
+  const draft = structuredClone(base);
+  draft.groups.splice(1, 0, { id: "new", name: "새 분류", collapsed: false, links: [] });
+  const latest = structuredClone(base);
+  latest.groups.reverse();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b", "a", "new"]);
+  const inverse = reconcileShortcutBoard(base, latest, draft);
+  const ids = inverse.groups.map((group) => group.id);
+  expect(ids.indexOf("b")).toBeLessThan(ids.indexOf("a"));
+  expect(ids).toContain("new");
+});

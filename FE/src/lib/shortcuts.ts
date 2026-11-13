@@ -35,7 +35,7 @@ export function parseShortcutUrl(value: string): URL | null {
   }
 }
 
-// Apply changed pair orders first, then preserve compatible saved order constraints.
+// Apply reordered existing pairs first, then compatible saved and inserted order.
 function mergeShortcutOrder(
   base: string[],
   draft: string[],
@@ -52,9 +52,9 @@ function mergeShortcutOrder(
         const after = present[right]!;
         if (
           changesOnly &&
-          original.has(before) &&
-          original.has(after) &&
-          original.get(before)! < original.get(after)!
+          (!original.has(before) ||
+            !original.has(after) ||
+            original.get(before)! < original.get(after)!)
         )
           continue;
         if (following.get(before)!.has(after) || following.get(after)!.has(before)) continue;
