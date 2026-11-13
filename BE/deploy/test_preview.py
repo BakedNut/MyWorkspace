@@ -282,6 +282,23 @@ class FrontendVerificationTest(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 preview.verify_frontend(expected)
 
+    def test_home_redirect_must_end_at_root_route(self):
+        redirects = {}
+        with self.served_frontend(redirects) as (bodies, media, expected):
+            for destination in ("/index.html", "/shortcuts"):
+                redirects["/"] = destination
+                bodies[destination] = bodies["/"]
+                media[destination] = media["/"]
+                with self.subTest(destination=destination), self.assertRaises(subprocess.CalledProcessError):
+                    preview.verify_frontend(expected)
+            redirects["/"] = "/?preview=1"
+            bodies["/?preview=1"] = bodies["/"]
+            media["/?preview=1"] = media["/"]
+            preview.verify_frontend(expected)
+            redirects["/"] = "/index.html"
+            redirects["/index.html"] = "/?preview=1"
+            preview.verify_frontend(expected)
+
     def test_same_origin_redirects_preserve_content_and_media_validation(self):
         with self.served_frontend({"/assets/start": "/assets/middle", "/assets/middle": "/assets/app.js"}) as (bodies, media, expected):
             asset = {"/assets/start": expected["/assets/app.js"]}

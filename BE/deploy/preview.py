@@ -97,6 +97,8 @@ javascript_types = {
 allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
 for path,asset in json.loads(sys.argv[2]).items():
     with opener.open(sys.argv[1]+path,timeout=5) as response:
+        if path=='/' and urllib.parse.urlsplit(response.geturl()).path!='/':
+            raise RuntimeError('Frontend home redirect changes app route: '+response.geturl())
         headers = response.headers.get_all('Content-Type') or []
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
