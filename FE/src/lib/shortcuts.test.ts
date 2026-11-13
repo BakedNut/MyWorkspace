@@ -307,3 +307,20 @@ it.each([
 ])("API에서 표현할 수 없는 호스트는 추가 전에 거부한다 %s", (url) => {
   expect(() => normalizeShortcutUrl(url)).toThrow("호스트 주소");
 });
+
+it("개별 링크 삭제 후 원래 분류를 삭제해도 개별 삭제 의도를 유지한다", () => {
+  const draft: ShortcutBoard = {
+    revision: board.revision,
+    groups: [structuredClone(board.groups[1]!)],
+  };
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision++;
+  const deleted = new Set(["one"]);
+  const result = reconcileShortcutBoard(board, draft, latest, deleted);
+  expect(result.groups.flatMap((group) => group.links)).toEqual([]);
+  const next = moveShortcut(latest, "one", "a");
+  next.revision++;
+  expect(
+    reconcileShortcutBoard(latest, result, next, deleted).groups.flatMap((group) => group.links),
+  ).toEqual([]);
+});

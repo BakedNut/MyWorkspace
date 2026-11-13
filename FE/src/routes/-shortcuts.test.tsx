@@ -351,3 +351,159 @@ it.each(["link", "group"])(
     else expect(persisted.groups[1]!.name).toBe("서버 수정");
   },
 );
+
+it.each(["automatic", "initial-manual", "manual-after-refresh", "manual-target-removed"])(
+  "추가 재시도에서 자동 대체 분류와 사용자 선택을 구분한다 %s",
+  async (mode) => {
+    const original = structuredClone(initial);
+    original.groups.push(
+      { id: "b", name: "분류 B", collapsed: false, links: [] },
+      { id: "c", name: "분류 C", collapsed: false, links: [] },
+    );
+    if (mode === "manual-target-removed")
+      original.groups.splice(2, 0, { id: "d", name: "분류 D", collapsed: false, links: [] });
+    if (mode === "initial-manual")
+      [original.groups[0], original.groups[1]] = [original.groups[1]!, original.groups[0]!];
+    let persisted = structuredClone(original);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        const added = input.groups
+          .flatMap((group) => group.links)
+          .find((link) => link.name === "추가 확인")!;
+        persisted = {
+          revision: input.revision + 2,
+          groups: input.groups
+            .filter(
+              (group) =>
+                group.id !== "dev" && (mode !== "manual-target-removed" || group.id !== "b"),
+            )
+            .map((group) =>
+              group.id === "c" ? { ...group, links: [{ ...added, name: "서버 수정" }] } : group,
+            ),
+        };
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== persisted.revision)
+        throw new ApiError("다른 곳에서 변경됐습니다.", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "추가 확인" } });
+    fireEvent.change(within(modal).getByLabelText("URL"), {
+      target: { value: "https://example.com/" },
+    });
+    if (mode === "initial-manual")
+      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "dev" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await within(modal).findByRole("alert");
+    if (mode === "manual-target-removed")
+      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "b" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(within(modal).getByLabelText("분류")).toHaveValue("c"));
+    if (mode === "manual-after-refresh")
+      fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "b" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(mode === "manual-after-refresh" ? 3 : 2);
+    const destination = mode === "manual-after-refresh" ? "b" : "c";
+    expect(persisted.groups.find((group) => group.id === destination)!.links[0]!.name).toBe(
+      "서버 수정",
+    );
+  },
+);
+
+it("링크를 개별 삭제한 뒤 원래 분류도 삭제하면 충돌 후 링크를 복원하지 않는다", async () => {
+  const original = structuredClone(initial);
+  original.groups[0]!.links = [original.groups[0]!.links[0]!];
+  original.groups.push({ id: "b", name: "분류 B", collapsed: false, links: [] });
+  const latest = structuredClone(original);
+  latest.revision++;
+  latest.groups[1]!.links = latest.groups[0]!.links;
+  latest.groups[0]!.links = [];
+  vi.mocked(api.shortcuts.get).mockResolvedValueOnce(original).mockResolvedValue(latest);
+  const save = vi
+    .spyOn(api.shortcuts, "save")
+    .mockRejectedValueOnce(new ApiError("다른 곳", "CONFLICT"))
+    .mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "GitHub 바로가기 삭제" }));
+  fireEvent.click(screen.getByRole("button", { name: "개발 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+  await screen.findByRole("button", { name: "저장" });
+  expect(screen.queryByRole("button", { name: "GitHub 바로가기 수정" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "정리" });
+  expect(save.mock.calls[1]![0].groups.flatMap((group) => group.links)).toEqual([]);
+});
+
+it("기존 오류 URL을 유지하며 이름과 분류를 바꾸고 새 오류 URL은 거부한다", async () => {
+  const original = structuredClone(initial);
+  original.groups[0]!.links = [{ id: "legacy", name: "기존 오류", url: "http://4294967296/" }];
+  original.groups.push({ id: "b", name: "분류 B", collapsed: false, links: [] });
+  vi.mocked(api.shortcuts.get).mockResolvedValue(original);
+  const save = vi
+    .spyOn(api.shortcuts, "save")
+    .mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
+  setup();
+  await screen.findByText("기존 오류");
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "기존 오류 바로가기 수정" }));
+  const modal = screen.getByRole("dialog");
+  fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "이름 수정" } });
+  fireEvent.change(within(modal).getByLabelText("분류"), { target: { value: "b" } });
+  fireEvent.change(within(modal).getByLabelText("URL"), {
+    target: { value: "http://4294967297/" },
+  });
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await within(modal).findByRole("alert");
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.change(within(modal).getByLabelText("URL"), {
+    target: { value: "http://4294967296/" },
+  });
+  fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "정리" });
+  expect(save.mock.calls[0]![0].groups[1]!.links[0]).toEqual({
+    id: "legacy",
+    name: "이름 수정",
+    url: "http://4294967296/",
+  });
+});
+
+it("빈 화면도 저장 중 추가를 비활성화해 새 초안의 유실을 방지한다", async () => {
+  let release: (() => void) | undefined;
+  vi.spyOn(api.shortcuts, "save").mockImplementation(
+    (input) =>
+      new Promise((resolve) => {
+        release = () => resolve({ ...input, revision: input.revision + 1 });
+      }),
+  );
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "개발 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  const add = screen.getByRole("button", { name: "바로가기 추가" });
+  await waitFor(() => expect(add).toBeDisabled());
+  fireEvent.click(add);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  release!();
+  await waitFor(() => expect(add).toBeEnabled());
+  fireEvent.click(add);
+  expect(screen.getByRole("dialog", { name: "바로가기 추가" })).toBeInTheDocument();
+});

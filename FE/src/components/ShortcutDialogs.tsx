@@ -21,6 +21,8 @@ export type ShortcutDialogTarget =
 export function ShortcutDialog({
   target,
   groups,
+  currentGroupId,
+  initialGroupSelectionVersion,
   onClose,
   onRestoreFocus,
   onSaveLink,
@@ -29,9 +31,16 @@ export function ShortcutDialog({
 }: {
   target: ShortcutDialogTarget;
   groups: ShortcutGroup[];
+  currentGroupId?: string | undefined;
+  initialGroupSelectionVersion?: number | null | undefined;
   onClose(): void;
   onRestoreFocus(): void;
-  onSaveLink(input: { name: string; url: string; groupId: string }): Promise<void>;
+  onSaveLink(input: {
+    name: string;
+    url: string;
+    groupId: string;
+    groupSelectionVersion: number | null;
+  }): Promise<void>;
   onSaveGroup(name: string): Promise<void>;
   onDeleteGroup(): Promise<void>;
 }) {
@@ -43,9 +52,13 @@ export function ShortcutDialog({
   const [groupId, setGroupId] = useState(
     target.kind === "link" ? (target.groupId ?? groups[0]?.id ?? "") : "",
   );
-  const selectedGroupId = groups.some((group) => group.id === groupId)
-    ? groupId
-    : (groups[0]?.id ?? "");
+  const [groupSelectionVersion, setGroupSelectionVersion] = useState(0);
+  const selectedGroupId =
+    currentGroupId && initialGroupSelectionVersion === groupSelectionVersion
+      ? currentGroupId
+      : groups.some((group) => group.id === groupId)
+        ? groupId
+        : (currentGroupId ?? groups[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const deleting = target.kind === "delete-group";
@@ -92,8 +105,13 @@ export function ShortcutDialog({
                 if (target.kind === "link")
                   await onSaveLink({
                     name: name.trim(),
-                    url: normalizeShortcutUrl(url),
+                    url:
+                      target.link && url === target.link.url
+                        ? target.link.url
+                        : normalizeShortcutUrl(url),
                     groupId: selectedGroupId,
+                    groupSelectionVersion:
+                      groupId === selectedGroupId ? groupSelectionVersion : null,
                   });
                 else await onSaveGroup(name.trim());
               }
@@ -141,7 +159,10 @@ export function ShortcutDialog({
                     <select
                       id={`${uid}-group`}
                       value={selectedGroupId}
-                      onChange={(event) => setGroupId(event.target.value)}
+                      onChange={(event) => {
+                        setGroupId(event.target.value);
+                        setGroupSelectionVersion((version) => version + 1);
+                      }}
                       className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm"
                     >
                       {groups.length ? (

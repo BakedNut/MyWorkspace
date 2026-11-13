@@ -181,16 +181,20 @@ export function reconcileShortcutBoard(
   base: ShortcutBoard,
   draft: ShortcutBoard,
   latest: ShortcutBoard,
+  deletedLinkIds: ReadonlySet<string> = new Set(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
   const baseLinks = links(base);
   const latestLinks = links(latest);
-  const mergedLinks = mergeShortcutItems(baseLinks, links(draft), latestLinks);
+  const mergedLinks = mergeShortcutItems(baseLinks, links(draft), latestLinks).filter(
+    (link) => !deletedLinkIds.has(link.id),
+  );
   for (const saved of latestLinks) {
     const original = baseLinks.find((link) => link.id === saved.id);
     if (
       original &&
+      !deletedLinkIds.has(saved.id) &&
       original.groupId !== saved.groupId &&
       !draft.groups.some((group) => group.id === original.groupId) &&
       !mergedLinks.some((link) => link.id === saved.id)

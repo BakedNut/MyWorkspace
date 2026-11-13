@@ -43,7 +43,7 @@ interface Props {
   board: Board;
   editing: boolean;
   busy: boolean;
-  onChange(board: Board): void;
+  onChange(board: Board, deletedLinkId?: string): void;
   onEditLink(link: ShortcutLink, groupId: string): void;
   onEditGroup(group: ShortcutGroup): void;
   onDeleteGroup(group: ShortcutGroup): void;
@@ -134,17 +134,20 @@ export function ShortcutBoard({
                       busy={busy}
                       onEdit={() => onEditLink(link, group.id)}
                       onDelete={() =>
-                        onChange({
-                          ...board,
-                          groups: board.groups.map((item) =>
-                            item.id === group.id
-                              ? {
-                                  ...item,
-                                  links: item.links.filter((entry) => entry.id !== link.id),
-                                }
-                              : item,
-                          ),
-                        })
+                        onChange(
+                          {
+                            ...board,
+                            groups: board.groups.map((item) =>
+                              item.id === group.id
+                                ? {
+                                    ...item,
+                                    links: item.links.filter((entry) => entry.id !== link.id),
+                                  }
+                                : item,
+                            ),
+                          },
+                          link.id,
+                        )
                       }
                     />
                   ))}

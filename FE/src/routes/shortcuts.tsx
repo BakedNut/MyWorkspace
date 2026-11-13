@@ -32,9 +32,14 @@ function ShortcutsPage() {
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const fallbackFocus = useRef<HTMLButtonElement | null>(null);
   const editingBase = useRef<Board | null>(null);
+  const deletedLinkIds = useRef(new Set<string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
-  const attemptedCreate = useRef<{ name: string; url?: string; groupId?: string } | null>(null);
+  const attemptedCreate = useRef<{
+    name: string;
+    url?: string;
+    groupSelectionVersion?: number | null;
+  } | null>(null);
   const [dialog, setDialog] = useState<(ShortcutDialogTarget & { operationId: string }) | null>(
     null,
   );
@@ -89,6 +94,7 @@ function ShortcutsPage() {
                 onClick={() => {
                   setDraft(null);
                   editingBase.current = null;
+                  deletedLinkIds.current.clear();
                   setConflict(false);
                   mutation.reset();
                 }}
@@ -107,7 +113,14 @@ function ShortcutsPage() {
                         queryFn: () => api.shortcuts.get(),
                         staleTime: 0,
                       });
-                      setDraft(reconcileShortcutBoard(editingBase.current, draft, latest));
+                      setDraft(
+                        reconcileShortcutBoard(
+                          editingBase.current,
+                          draft,
+                          latest,
+                          deletedLinkIds.current,
+                        ),
+                      );
                       editingBase.current = structuredClone(latest);
                       setConflict(false);
                       mutation.reset();
@@ -116,6 +129,7 @@ function ShortcutsPage() {
                     await mutation.mutateAsync(draft);
                     setDraft(null);
                     editingBase.current = null;
+                    deletedLinkIds.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
                   }
@@ -134,6 +148,7 @@ function ShortcutsPage() {
                 onClick={() => {
                   mutation.reset();
                   editingBase.current = structuredClone(board!);
+                  deletedLinkIds.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));
                 }}
@@ -186,7 +201,11 @@ function ShortcutsPage() {
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-5 text-center">
               <Bookmark aria-hidden className="mb-1 size-8 text-primary/70" />
               <p className="font-medium">자주 찾는 사이트를 모아 보세요.</p>
-              <Button variant="outline" onClick={() => openDialog({ kind: "link" })}>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => openDialog({ kind: "link" })}
+              >
                 <Plus aria-hidden /> 바로가기 추가
               </Button>
             </div>
@@ -195,7 +214,8 @@ function ShortcutsPage() {
             board={board}
             editing={editing}
             busy={busy}
-            onChange={(next) => {
+            onChange={(next, deletedLinkId) => {
+              if (deletedLinkId) deletedLinkIds.current.add(deletedLinkId);
               void change(next).catch(() => {});
             }}
             onEditLink={(link, groupId) => openDialog({ kind: "link", link, groupId })}
@@ -212,11 +232,25 @@ function ShortcutsPage() {
               }}
               target={dialog}
               groups={board.groups}
+              currentGroupId={
+                dialog.kind === "link"
+                  ? board.groups.find((group) =>
+                      group.links.some(
+                        (link) => link.id === (dialog.link?.id ?? dialog.operationId),
+                      ),
+                    )?.id
+                  : undefined
+              }
+              initialGroupSelectionVersion={
+                dialog.kind === "link" && dialog.link
+                  ? 0
+                  : attemptedCreate.current?.groupSelectionVersion
+              }
               onClose={() => {
                 setDialog(null);
                 mutation.reset();
               }}
-              onSaveLink={async ({ name, url, groupId }) => {
+              onSaveLink={async ({ name, url, groupId, groupSelectionVersion }) => {
                 const id =
                   dialog.kind === "link"
                     ? (dialog.link?.id ?? dialog.operationId)
@@ -232,9 +266,19 @@ function ShortcutsPage() {
                   if (attempted && existingLink && existingGroup) {
                     if (name === attempted.name) name = existingLink.name;
                     if (url === attempted.url) url = existingLink.url;
-                    if (group === attempted.groupId) group = existingGroup.id;
+                    if (
+                      groupSelectionVersion === null ||
+                      groupSelectionVersion === attempted.groupSelectionVersion
+                    )
+                      group = existingGroup.id;
                   }
-                  if (!attempted) attemptedCreate.current = { name, url, groupId: group };
+                  if (!attempted) attemptedCreate.current = { name, url, groupSelectionVersion };
+                }
+                if (dialog.kind === "link" && dialog.link && existingLink && existingGroup) {
+                  if (name === dialog.link.name) name = existingLink.name;
+                  if (url === dialog.link.url) url = existingLink.url;
+                  if (groupSelectionVersion === null || groupSelectionVersion === 0)
+                    group = existingGroup.id;
                 }
                 if (
                   existingGroup?.id === group &&
