@@ -39,9 +39,10 @@ class FrontendAssets(HTMLParser):
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
         if tag == "script" and attrs.get("src"):
-            self.urls.append(attrs["src"])
+            self.urls.append((attrs["src"], "javascript"))
         if tag == "link" and attrs.get("rel") in ("modulepreload", "stylesheet") and attrs.get("href"):
-            self.urls.append(attrs["href"])
+            kind = "javascript" if attrs["rel"] == "modulepreload" else "css"
+            self.urls.append((attrs["href"], kind))
 
 
 def frontend_manifest(dist):
@@ -49,26 +50,39 @@ def frontend_manifest(dist):
     index = dist / "index.html"
     parser = FrontendAssets()
     parser.feed(index.read_text())
-    files = {"/": index}
-    for reference in parser.urls:
+    files = {"/": (index, "html")}
+    for reference, kind in parser.urls:
         url = urlsplit(urljoin("/", reference))
         if url.scheme or url.netloc:
             continue
         path = (dist / unquote(url.path).lstrip("/")).resolve()
         if not path.is_relative_to(dist) or not path.is_file():
             raise ValueError("Referenced frontend asset is missing: " + reference)
-        files[url.path + ("?" + url.query if url.query else "")] = path
+        files[url.path + ("?" + url.query if url.query else "")] = (path, kind)
     for path in dist.rglob("*"):
-        if path.is_file() and path.suffix in (".js", ".css"):
-            files["/" + path.relative_to(dist).as_posix()] = path
-    return {url: hashlib.sha256(path.read_bytes()).hexdigest() for url, path in files.items()}
+        if path.is_file() and path.suffix in (".js", ".mjs", ".css"):
+            kind = "css" if path.suffix == ".css" else "javascript"
+            files.setdefault("/" + path.relative_to(dist).as_posix(), (path, kind))
+    return {url: {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "kind": kind}
+            for url, (path, kind) in files.items()}
 
 
 def verify_frontend(expected):
     program = """import hashlib,json,sys,urllib.request
-for path,digest in json.loads(sys.argv[2]).items():
+javascript_types = {
+    'application/ecmascript','application/javascript','application/x-ecmascript','application/x-javascript',
+    'text/ecmascript','text/javascript','text/javascript1.0','text/javascript1.1','text/javascript1.2',
+    'text/javascript1.3','text/javascript1.4','text/javascript1.5','text/jscript','text/livescript',
+    'text/x-ecmascript','text/x-javascript'
+}
+allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
+for path,asset in json.loads(sys.argv[2]).items():
     with urllib.request.urlopen(sys.argv[1]+path,timeout=5) as response:
-        if hashlib.sha256(response.read()).hexdigest()!=digest:
+        headers = response.headers.get_all('Content-Type') or []
+        media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
+        if media_type not in allowed_types[asset['kind']]:
+            raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
+        if hashlib.sha256(response.read()).hexdigest()!=asset['sha256']:
             raise RuntimeError('Served frontend content mismatch: '+path)
 """
     run(200, ["python3", "-c", program, WEB_URL, json.dumps(expected)])

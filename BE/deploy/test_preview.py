@@ -220,22 +220,33 @@ class FrontendVerificationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             dist = Path(directory)
             (dist / "assets").mkdir()
-            (dist / "index.html").write_text('<script src="./assets/app.js?v=1"></script><link rel="stylesheet" href="/assets/app.css">')
+            (dist / "index.html").write_text('<script src="./assets/app.js?v=1"></script><script src="/entry"></script><link rel="stylesheet" href="/assets/app.css">')
             (dist / "assets/app.js").write_text('console.log("ready")')
             (dist / "assets/app.css").write_text('body { color: blue }')
+            (dist / "entry").write_text('console.log("entry")')
             manifest = preview.frontend_manifest(dist)
             self.assertIn("/", manifest)
             self.assertIn("/assets/app.js?v=1", manifest)
             self.assertIn("/assets/app.js", manifest)
             self.assertIn("/assets/app.css", manifest)
-            self.assertEqual(manifest["/assets/app.js"], hashlib.sha256((dist / "assets/app.js").read_bytes()).hexdigest())
+            self.assertEqual(manifest["/assets/app.js"]["sha256"], hashlib.sha256((dist / "assets/app.js").read_bytes()).hexdigest())
+            self.assertEqual(manifest["/entry"]["kind"], "javascript")
 
-    def test_web_page_and_script_must_be_served_with_expected_content(self):
-        bodies = {"/": b'<script src="/assets/app.js"></script>', "/assets/app.js": b'console.log("ready")'}
+    @contextlib.contextmanager
+    def served_frontend(self):
+        bodies = {"/": b'<script src="/assets/app.js"></script>',
+                  "/assets/app.js": b'console.log("ready")',
+                  "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
+        media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript"}
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 content = bodies.get(self.path)
                 self.send_response(200 if content is not None else 404)
+                values = media.get(self.path)
+                if isinstance(values, str):
+                    values = [values]
+                for value in values or []:
+                    self.send_header("Content-Type", value)
                 self.end_headers()
                 self.wfile.write(content or b"missing")
             def log_message(self, *args):
@@ -243,22 +254,48 @@ class FrontendVerificationTest(unittest.TestCase):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        expected = {path: hashlib.sha256(body).hexdigest() for path, body in bodies.items()}
+        kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript"}
+        expected = {path: {"sha256": hashlib.sha256(body).hexdigest(), "kind": kinds[path]}
+                    for path, body in bodies.items()}
         def local_run(ct, args, data=None):
             return subprocess.run(args, input=data, text=True, capture_output=True, check=True).stdout
         try:
             with patch.object(preview, "WEB_URL", f"http://127.0.0.1:{server.server_port}"), patch.object(preview, "run", side_effect=local_run):
-                preview.verify_frontend(expected)
-                del bodies["/assets/app.js"]
-                with self.assertRaises(subprocess.CalledProcessError):
-                    preview.verify_frontend(expected)
-                bodies["/assets/app.js"] = bodies["/"]
-                with self.assertRaises(subprocess.CalledProcessError):
-                    preview.verify_frontend(expected)
+                yield bodies, media, expected
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_web_page_and_script_must_be_served_with_expected_content(self):
+        with self.served_frontend() as (bodies, media, expected):
+            preview.verify_frontend(expected)
+            del bodies["/assets/app.js"]
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
+            bodies["/assets/app.js"] = bodies["/"]
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
+
+    def test_media_types_are_required_and_accept_valid_parameters(self):
+        with self.served_frontend() as (bodies, media, expected):
+            for valid in ("text/javascript", "application/javascript; charset=utf-8", "TEXT/JAVASCRIPT", "text/ecmascript"):
+                media["/assets/app.js"] = valid
+                preview.verify_frontend(expected)
+            for path, invalid in (("/assets/app.js", None), ("/assets/app.js", "text/plain"),
+                                  ("/assets/app.js", "application/octet-stream"),
+                                  ("/assets/app.js", ["text/javascript", "text/plain"]),
+                                  ("/assets/app.css", None), ("/assets/app.css", "text/plain"),
+                                  ("/entry", None), ("/entry", "text/plain"),
+                                  ("/", "application/octet-stream")):
+                with self.subTest(path=path, media_type=invalid):
+                    previous = media[path]
+                    media[path] = invalid
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        preview.verify_frontend(expected)
+                    media[path] = previous
+            media["/assets/app.css"] = "text/css; charset=utf-8"
+            preview.verify_frontend(expected)
 
 
 if __name__ == "__main__":
