@@ -204,7 +204,8 @@ export function reconcileShortcutBoard(
       original &&
       !deletedLinkIds.has(saved.id) &&
       original.groupId !== saved.groupId &&
-      !draft.groups.some((group) => group.id === original.groupId) &&
+      (deletedGroupIds.has(original.groupId) ||
+        !draft.groups.some((group) => group.id === original.groupId)) &&
       !mergedLinks.some((link) => link.id === saved.id)
     )
       mergedLinks.push(saved);

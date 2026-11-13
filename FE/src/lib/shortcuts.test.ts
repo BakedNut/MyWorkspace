@@ -412,3 +412,64 @@ it.each([false, true])(
     if (addLocalLink) expect(next.groups[0]!.links.map((link) => link.id)).toEqual(["y"]);
   },
 );
+
+it.each([false, true])(
+  "임시 복원 분류에서 뒤늦게 원격 이동한 링크도 개별 삭제 의도에 따라 처리한다 %s",
+  (explicitDelete) => {
+    const x = { id: "x", name: "X", url: "https://example.com/X" };
+    const y = { id: "y", name: "Y", url: "https://example.com/Y" };
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [x] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push(y);
+    const placements = new Map<string, string>();
+    const deletedLinks = new Set(explicitDelete ? ["x"] : []);
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(restored.groups[0]!.id).toBe("a");
+    expect(restored.groups[0]!.links.map((link) => link.id)).toEqual(["y"]);
+    const moved: ShortcutBoard = {
+      revision: 3,
+      groups: [
+        { ...latest.groups[0]!, links: [y] },
+        { id: "b", name: "B", collapsed: false, links: [{ ...x, name: "원격 수정 X" }] },
+      ],
+    };
+    const merged = reconcileShortcutBoard(
+      latest,
+      restored,
+      moved,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(merged.groups.map((group) => group.id)).toEqual(["b"]);
+    expect(merged.groups[0]!.links.map((link) => link.id).sort()).toEqual(
+      explicitDelete ? ["y"] : ["x", "y"],
+    );
+    if (!explicitDelete)
+      expect(merged.groups[0]!.links.find((link) => link.id === "x")!.name).toBe("원격 수정 X");
+    const removedY: ShortcutBoard = { ...structuredClone(moved), revision: 4 };
+    removedY.groups[0]!.links = [];
+    const final = reconcileShortcutBoard(
+      moved,
+      merged,
+      removedY,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(final.groups.map((group) => group.id)).toEqual(["b"]);
+    expect(final.groups[0]!.links.map((link) => link.id)).toEqual(explicitDelete ? [] : ["x"]);
+  },
+);
