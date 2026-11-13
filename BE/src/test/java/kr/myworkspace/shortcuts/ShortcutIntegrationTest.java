@@ -284,4 +284,36 @@ class ShortcutIntegrationTest {
           .andExpect(status().isOk());
     }
   }
+
+  @Test
+  void browserIpAliasesShareTheCanonicalIconAndCacheKey() throws Exception {
+    for (var pair :
+        java.util.Map.of(
+                "http://134744072/", "http://8.8.8.8/",
+                "http://[2001:0db8:0:0:0:0:0:1]/", "http://[2001:db8::1]/")
+            .entrySet()) {
+      jdbc.update("delete from shortcut_icon");
+      org.mockito.Mockito.reset(fetcher);
+      docs.save("shortcuts", board(pair.getKey()));
+      when(fetcher.fetch(URI.create(pair.getValue())))
+          .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+      var first =
+          mvc.perform(
+                  get("/api/shortcuts/icons/portal")
+                      .param("site", pair.getValue().replaceAll("/$", ""))
+                      .with(trusted))
+              .andReturn();
+      first.getAsyncResult(5000);
+      mvc.perform(asyncDispatch(first)).andExpect(status().isOk());
+      docs.save("shortcuts", board(pair.getValue()));
+      var second =
+          mvc.perform(get("/api/shortcuts/icons/portal").param("site", pair.getKey()).with(trusted))
+              .andReturn();
+      second.getAsyncResult(5000);
+      mvc.perform(asyncDispatch(second)).andExpect(status().isOk());
+      verify(fetcher, times(1)).fetch(URI.create(pair.getValue()));
+      assertThat(jdbc.queryForObject("select count(*) from shortcut_icon", Integer.class))
+          .isEqualTo(1);
+    }
+  }
 }

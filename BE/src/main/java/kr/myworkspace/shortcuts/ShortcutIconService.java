@@ -47,9 +47,14 @@ class ShortcutIconService {
             .filter(item -> item.id().equals(id))
             .findFirst()
             .orElseThrow(() -> new ApiException(404, "NOT_FOUND", "바로가기를 찾을 수 없습니다."));
-    var origin = ShortcutIconFetcher.origin(link.url());
-    if (site != null && !site.equals(origin.toString().replaceAll("/$", "")))
+    java.net.URI origin;
+    try {
+      origin = ShortcutUrl.origin(link.url());
+      if (site != null && !origin.equals(ShortcutUrl.origin(site)))
+        return CompletableFuture.completedFuture(null);
+    } catch (IllegalArgumentException invalid) {
       return CompletableFuture.completedFuture(null);
+    }
     String key;
     try {
       key =

@@ -75,15 +75,7 @@ class ShortcutIconFetcher {
   }
 
   static URI origin(String value) {
-    var uri = URI.create(value);
-    String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
-    int port = uri.getPort();
-    if ((scheme.equals("https") && port == 443) || (scheme.equals("http") && port == 80)) port = -1;
-    try {
-      return new URI(scheme, null, uri.getHost().toLowerCase(Locale.ROOT), port, "/", null, null);
-    } catch (Exception error) {
-      throw new IllegalArgumentException(error);
-    }
+    return ShortcutUrl.origin(value);
   }
 
   boolean addressAllowed(InetAddress address, boolean originalHost) {
@@ -102,7 +94,7 @@ class ShortcutIconFetcher {
         || uri.getRawUserInfo() != null
         || !Set.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))
         || uri.getPort() > 65535) return false;
-    if (!original.getHost().equalsIgnoreCase(uri.getHost())) return true;
+    if (!ShortcutUrl.host(original.getHost()).equals(ShortcutUrl.host(uri.getHost()))) return true;
     int from =
         original.getPort() == -1
             ? (original.getScheme().equals("https") ? 443 : 80)
@@ -181,6 +173,7 @@ class ShortcutIconFetcher {
     try {
       URI uri = requested;
       for (int redirects = 0; redirects <= 3; redirects++) {
+        uri = ShortcutUrl.canonical(uri);
         long remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
         if (remaining <= 0 || !targetAllowed(original, uri)) return null;
         resolver.resolve(uri.getHost());
