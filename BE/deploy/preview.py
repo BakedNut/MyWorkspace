@@ -68,7 +68,22 @@ def frontend_manifest(dist):
 
 
 def verify_frontend(expected):
-    program = """import hashlib,json,sys,urllib.request
+    program = """import hashlib,json,sys,urllib.request,urllib.parse
+
+def origin(url):
+    parsed = urllib.parse.urlsplit(url)
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme=='https' else 80
+    return parsed.scheme,parsed.hostname,port
+
+class SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,request,fp,code,message,headers,new_url):
+        if origin(request.full_url)!=origin(new_url):
+            raise RuntimeError('Cross-origin frontend redirect: '+request.full_url)
+        return super().redirect_request(request,fp,code,message,headers,new_url)
+
+opener = urllib.request.build_opener(SameOriginRedirect())
 javascript_types = {
     'application/ecmascript','application/javascript','application/x-ecmascript','application/x-javascript',
     'text/ecmascript','text/javascript','text/javascript1.0','text/javascript1.1','text/javascript1.2',
@@ -77,7 +92,7 @@ javascript_types = {
 }
 allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
 for path,asset in json.loads(sys.argv[2]).items():
-    with urllib.request.urlopen(sys.argv[1]+path,timeout=5) as response:
+    with opener.open(sys.argv[1]+path,timeout=5) as response:
         headers = response.headers.get_all('Content-Type') or []
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:

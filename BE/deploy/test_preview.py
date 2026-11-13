@@ -233,13 +233,18 @@ class FrontendVerificationTest(unittest.TestCase):
             self.assertEqual(manifest["/entry"]["kind"], "javascript")
 
     @contextlib.contextmanager
-    def served_frontend(self):
+    def served_frontend(self, redirects=None):
         bodies = {"/": b'<script src="/assets/app.js"></script>',
                   "/assets/app.js": b'console.log("ready")',
                   "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
         media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript"}
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path in (redirects or {}):
+                    self.send_response(302)
+                    self.send_header("Location", redirects[self.path])
+                    self.end_headers()
+                    return
                 content = bodies.get(self.path)
                 self.send_response(200 if content is not None else 404)
                 values = media.get(self.path)
@@ -276,6 +281,47 @@ class FrontendVerificationTest(unittest.TestCase):
             bodies["/assets/app.js"] = bodies["/"]
             with self.assertRaises(subprocess.CalledProcessError):
                 preview.verify_frontend(expected)
+
+    def test_same_origin_redirects_preserve_content_and_media_validation(self):
+        with self.served_frontend({"/start": "/middle", "/middle": "/assets/app.js"}) as (bodies, media, expected):
+            asset = {"/start": expected["/assets/app.js"]}
+            preview.verify_frontend(asset)
+            media["/assets/app.js"] = "text/plain"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(asset)
+            media["/assets/app.js"] = "text/javascript"
+            bodies["/assets/app.js"] = b"wrong content"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(asset)
+
+    def test_local_assets_reject_cross_origin_redirects(self):
+        with self.served_frontend() as (bodies, media, expected):
+            target = preview.WEB_URL
+            redirects = {}
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(302)
+                    self.send_header("Location", redirects.get(self.path, target + self.path))
+                    self.end_headers()
+                def log_message(self, *args):
+                    pass
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            source = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with patch.object(preview, "WEB_URL", source):
+                    for path in ("/", "/assets/app.js", "/assets/app.css", "/entry"):
+                        with self.subTest(path=path), self.assertRaises(subprocess.CalledProcessError):
+                            preview.verify_frontend({path: expected[path]})
+                    redirects["/assets/app.js"] = "/same-origin"
+                    redirects["/same-origin"] = target + "/assets/app.js"
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        preview.verify_frontend({"/assets/app.js": expected["/assets/app.js"]})
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
     def test_media_types_are_required_and_accept_valid_parameters(self):
         with self.served_frontend() as (bodies, media, expected):
