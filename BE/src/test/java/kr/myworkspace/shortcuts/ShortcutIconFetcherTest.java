@@ -128,4 +128,95 @@ class ShortcutIconFetcherTest {
       fetcher.close();
     }
   }
+
+  @Test
+  void dnsTimeoutReleasesBothWorkersForSubsequentRequests() throws Exception {
+    var fetcher = new ShortcutIconFetcher("192.168.1.0/24");
+    try (var blackhole = new java.net.DatagramSocket(0, InetAddress.getLoopbackAddress());
+        var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      var network =
+          new org.xbill.DNS.SimpleResolver(
+              new java.net.InetSocketAddress(
+                  InetAddress.getLoopbackAddress(), blackhole.getLocalPort()));
+      network.setTimeout(java.time.Duration.ofSeconds(5));
+      var session = org.xbill.DNS.lookup.LookupSession.builder().resolver(network).build();
+      var first =
+          workers.submit(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              fetcher.lookup(
+                                  session,
+                                  "slow.invalid.",
+                                  System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200)))
+                      .isInstanceOf(UnknownHostException.class));
+      var second =
+          workers.submit(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              fetcher.lookup(
+                                  session,
+                                  "other.invalid.",
+                                  System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200)))
+                      .isInstanceOf(UnknownHostException.class));
+      first.get(3, TimeUnit.SECONDS);
+      second.get(3, TimeUnit.SECONDS);
+      var next =
+          workers.submit(
+              () -> fetcher.lookup("8.8.8.8", System.nanoTime() + TimeUnit.SECONDS.toNanos(1)));
+      assertThat(next.get(2, TimeUnit.SECONDS)[0].getHostAddress()).isEqualTo("8.8.8.8");
+    } finally {
+      fetcher.close();
+    }
+  }
+
+  @Test
+  void pinnedDnsAddressesAreValidatedOnceAndReusedForConnections() throws Exception {
+    var fetcher = spy(new ShortcutIconFetcher("192.168.1.0/24"));
+    try {
+      var publicIp = InetAddress.getByName("8.8.8.8");
+      doReturn(new InetAddress[] {publicIp}).when(fetcher).lookup(eq("example.com"), anyLong());
+      var resolver =
+          fetcher.resolver(
+              URI.create("https://example.com/"), System.nanoTime() + TimeUnit.SECONDS.toNanos(1));
+      resolver.resolve("EXAMPLE.COM")[0] = InetAddress.getLoopbackAddress();
+      assertThat(resolver.resolve("example.com")).containsExactly(publicIp);
+      verify(fetcher, times(1)).lookup(eq("example.com"), anyLong());
+      doReturn(new InetAddress[] {publicIp, InetAddress.getLoopbackAddress()})
+          .when(fetcher)
+          .lookup(eq("mixed.example"), anyLong());
+      assertThatThrownBy(() -> resolver.resolve("mixed.example"))
+          .isInstanceOf(UnknownHostException.class);
+    } finally {
+      fetcher.close();
+    }
+  }
+
+  @Test
+  void noHttpRequestStartsAfterDnsConsumesTheRemainingBudget() throws Exception {
+    var fetcher = new ShortcutIconFetcher("192.168.1.0/24");
+    try (var client = mock(CloseableHttpClient.class)) {
+      var resolver = mock(DnsResolver.class);
+      when(resolver.resolve("example.com"))
+          .thenAnswer(
+              invocation -> {
+                Thread.sleep(30);
+                return new InetAddress[] {InetAddress.getByName("8.8.8.8")};
+              });
+      URI origin = URI.create("https://example.com/");
+      assertThat(
+              fetcher.read(
+                  client,
+                  resolver,
+                  origin,
+                  origin,
+                  false,
+                  System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10)))
+          .isNull();
+      verifyNoInteractions(client);
+    } finally {
+      fetcher.close();
+    }
+  }
 }

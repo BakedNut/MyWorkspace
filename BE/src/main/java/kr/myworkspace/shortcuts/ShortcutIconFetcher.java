@@ -7,6 +7,8 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -14,8 +16,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.swing.text.MutableAttributeSet;
 import javax.swing.text.html.HTML;
 import javax.swing.text.html.HTMLEditorKit;
@@ -31,6 +37,15 @@ import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.web.util.matcher.IpAddressMatcher;
 import org.springframework.stereotype.Component;
+import org.xbill.DNS.AAAARecord;
+import org.xbill.DNS.ARecord;
+import org.xbill.DNS.Address;
+import org.xbill.DNS.ExtendedResolver;
+import org.xbill.DNS.Message;
+import org.xbill.DNS.Name;
+import org.xbill.DNS.ResolverConfig;
+import org.xbill.DNS.Type;
+import org.xbill.DNS.lookup.LookupSession;
 
 @Component
 class ShortcutIconFetcher {
@@ -106,26 +121,94 @@ class ShortcutIconFetcher {
     return from == to || (from == 80 && to == 443 && uri.getScheme().equalsIgnoreCase("https"));
   }
 
-  ShortcutIcon fetch(URI original) {
-    Map<String, InetAddress[]> pinned = new HashMap<>();
-    DnsResolver resolver =
-        new DnsResolver() {
-          public InetAddress[] resolve(String host) throws UnknownHostException {
-            String name = host.toLowerCase(Locale.ROOT);
-            if (!pinned.containsKey(name)) {
-              var addresses = InetAddress.getAllByName(host);
-              for (var address : addresses)
-                if (!addressAllowed(address, original.getHost().equalsIgnoreCase(host)))
-                  throw new UnknownHostException("Icon destination rejected");
-              pinned.put(name, addresses);
-            }
-            return pinned.get(name).clone();
-          }
-
-          public String resolveCanonicalHostname(String host) {
-            return host;
+  InetAddress[] lookup(String host, long deadline) throws UnknownHostException {
+    String name = host.startsWith("[") ? host.substring(1, host.length() - 1) : host;
+    for (int family : new int[] {Address.IPv4, Address.IPv6}) {
+      byte[] bytes = Address.toByteArray(name, family);
+      if (bytes != null) return new InetAddress[] {InetAddress.getByAddress(bytes)};
+    }
+    var network =
+        new ExtendedResolver() {
+          @Override
+          public CompletionStage<Message> sendAsync(Message query, Executor executor) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0)
+              return CompletableFuture.failedFuture(new TimeoutException("DNS deadline"));
+            setTimeout(Duration.ofNanos(remaining));
+            for (var resolver : getResolvers())
+              resolver.setTimeout(
+                  Duration.ofNanos(Math.min(remaining, TimeUnit.SECONDS.toNanos(2))));
+            return super.sendAsync(query, executor);
           }
         };
+    network.setRetries(1);
+    var config = ResolverConfig.getCurrentConfig();
+    var session =
+        LookupSession.builder()
+            .resolver(network)
+            .defaultHostsFileParser()
+            .searchPath(config.searchPath())
+            .ndots(config.ndots())
+            .build();
+    return lookup(session, name, deadline);
+  }
+
+  InetAddress[] lookup(LookupSession session, String host, long deadline)
+      throws UnknownHostException {
+    var queries = new ArrayList<CompletableFuture<List<org.xbill.DNS.Record>>>();
+    try {
+      for (int type : new int[] {Type.A, Type.AAAA})
+        queries.add(
+            session
+                .lookupAsync(Name.fromString(host), type)
+                .handle(
+                    (result, error) ->
+                        error == null ? result.getRecords() : List.<org.xbill.DNS.Record>of())
+                .toCompletableFuture());
+      CompletableFuture.allOf(queries.toArray(CompletableFuture[]::new))
+          .get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+      var addresses = new ArrayList<InetAddress>();
+      for (var query : queries)
+        for (var record : query.join()) {
+          if (record instanceof ARecord ipv4) addresses.add(ipv4.getAddress());
+          if (record instanceof AAAARecord ipv6) addresses.add(ipv6.getAddress());
+        }
+      if (addresses.isEmpty()) throw new UnknownHostException(host);
+      return addresses.toArray(InetAddress[]::new);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new UnknownHostException("DNS lookup interrupted");
+    } catch (Exception error) {
+      throw new UnknownHostException("DNS lookup failed or timed out");
+    } finally {
+      queries.forEach(query -> query.cancel(true));
+    }
+  }
+
+  DnsResolver resolver(URI original, long deadline) {
+    Map<String, InetAddress[]> pinned = new HashMap<>();
+    return new DnsResolver() {
+      public InetAddress[] resolve(String host) throws UnknownHostException {
+        String name = ShortcutUrl.host(host);
+        if (!pinned.containsKey(name)) {
+          var addresses = lookup(name, deadline);
+          for (var address : addresses)
+            if (!addressAllowed(address, ShortcutUrl.host(original.getHost()).equals(name)))
+              throw new UnknownHostException("Icon destination rejected");
+          pinned.put(name, addresses);
+        }
+        return pinned.get(name).clone();
+      }
+
+      public String resolveCanonicalHostname(String host) {
+        return host;
+      }
+    };
+  }
+
+  ShortcutIcon fetch(URI original) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+    DnsResolver resolver = resolver(original, deadline);
     var manager =
         PoolingHttpClientConnectionManagerBuilder.create()
             .useSystemProperties()
@@ -144,7 +227,6 @@ class ShortcutIconFetcher {
             .disableCookieManagement()
             .disableContentCompression()
             .build()) {
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
       Set<URI> candidates = new LinkedHashSet<>();
       var page = read(client, resolver, original, original, true, deadline);
       if (page != null) candidates.addAll(candidates(page.uri(), page.bytes()));
@@ -177,6 +259,8 @@ class ShortcutIconFetcher {
         long remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
         if (remaining <= 0 || !targetAllowed(original, uri)) return null;
         resolver.resolve(uri.getHost());
+        remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+        if (remaining <= 0) return null;
         var request = new HttpGet(uri);
         request.setConfig(
             RequestConfig.custom()
