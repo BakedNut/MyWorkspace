@@ -369,13 +369,31 @@ it("명시적인 이동의 대상이 사라져 자동 배치해도 직접 이동
   latest.groups.pop();
   latest.revision++;
   const placements = new Map<string, string>();
-  const merged = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+  const moved = new Map<string, string>();
+  recordShortcutMoves(base, draft, moved);
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
   expect(merged.groups[0]!.id).toBe("b");
-  expect(placements.size).toBe(0);
+  expect(placements.get("x")).toBe("b");
   const removed = structuredClone(latest);
   removed.groups[0]!.links = [];
   removed.revision++;
-  const next = reconcileShortcutBoard(latest, merged, removed, new Set(), placements);
+  const next = reconcileShortcutBoard(
+    latest,
+    merged,
+    removed,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
   expect(next.groups[0]!.links[0]!.id).toBe("x");
 });
 
@@ -672,3 +690,64 @@ it.each([false, true])("서버 이동을 수용한 경우에만 이전 이동 �
     override ? ["x"] : [],
   );
 });
+
+it.each(["missing-target", "existing-target", "deleted-server-group"])(
+  "선택한 이동 대상이 사라지면 유효한 서버 위치를 대체 배치로 우선한다 %s",
+  (mode) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        ...["b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+      ],
+    };
+    const draft = moveShortcut(base, "x", "b");
+    const moved = new Map<string, string>();
+    recordShortcutMoves(base, draft, moved);
+    if (mode === "deleted-server-group")
+      draft.groups = draft.groups.filter((group) => group.id !== "c");
+    const latest = moveShortcut(base, "x", "c");
+    latest.revision++;
+    if (mode !== "existing-target")
+      latest.groups = latest.groups.filter((group) => group.id !== "b");
+    const placements = new Map<string, string>();
+    const deletedGroups = new Set(mode === "deleted-server-group" ? ["c"] : []);
+    const merged = reconcileShortcutBoard(
+      base,
+      draft,
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      moved,
+    );
+    const destination = merged.groups.find((group) =>
+      group.links.some((link) => link.id === "x"),
+    )!.id;
+    expect(destination).toBe(
+      mode === "missing-target" ? "c" : mode === "existing-target" ? "b" : "a",
+    );
+    expect(placements.get("x")).toBe(mode === "existing-target" ? undefined : destination);
+    expect(moved.has("x")).toBe(mode !== "missing-target");
+    const deleted = structuredClone(latest);
+    deleted.revision++;
+    for (const group of deleted.groups) group.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      merged,
+      deleted,
+      new Set(),
+      placements,
+      deletedGroups,
+      moved,
+    );
+    expect(next.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(
+      mode === "missing-target" ? [] : ["x"],
+    );
+  },
+);

@@ -255,7 +255,11 @@ export function reconcileShortcutBoard(
   for (const link of mergedLinks) {
     if (groups.some((group) => group.id === link.groupId)) continue;
     const original = base.groups.find((group) => group.links.some((item) => item.id === link.id));
-    let destination = groups.find((group) => group.id === original?.id) ?? groups[0];
+    const saved = latestLinks.find((item) => item.id === link.id);
+    let destination =
+      groups.find((group) => group.id === saved?.groupId) ??
+      groups.find((group) => group.id === original?.id) ??
+      groups[0];
     if (!destination) {
       const source = [...mergedGroups, ...latest.groups, ...draft.groups, ...base.groups].find(
         (group) => group.id === link.groupId,
@@ -264,10 +268,7 @@ export function reconcileShortcutBoard(
       groups.push(destination);
     }
     link.groupId = destination.id;
-    const edited = draftLinks.find((item) => item.id === link.id);
-    const before = comparisonLinks.find((item) => item.id === link.id);
-    if (!edited || edited.groupId === before?.groupId)
-      automaticLinkGroups.set(link.id, destination.id);
+    automaticLinkGroups.set(link.id, destination.id);
   }
   for (const [id] of movedLinkOrigins) {
     const original = baseLinks.find((link) => link.id === id);
