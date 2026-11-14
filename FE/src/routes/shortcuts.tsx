@@ -6,7 +6,7 @@ import { ApiError, api } from "@/api";
 import { ShortcutBoard } from "@/components/ShortcutBoard";
 import { ShortcutDialog, type ShortcutDialogTarget } from "@/components/ShortcutDialogs";
 import { Button } from "@/components/ui/button";
-import { reconcileShortcutBoard } from "@/lib/shortcuts";
+import { reconcileShortcutBoard, recordShortcutMoves } from "@/lib/shortcuts";
 import type { ShortcutBoard as Board } from "@/types/domain";
 
 export const Route = createFileRoute("/shortcuts")({
@@ -36,7 +36,7 @@ function ShortcutsPage() {
   const editingBase = useRef<Board | null>(null);
   const deletedLinkIds = useRef(new Set<string>());
   const deletedGroupIds = useRef(new Set<string>());
-  const movedLinkIds = useRef(new Set<string>());
+  const movedLinkOrigins = useRef(new Map<string, string>());
   const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
@@ -64,7 +64,8 @@ function ShortcutsPage() {
   const editing = draft !== null;
   const busy = mutation.isPending || query.isFetching;
   const change = async (next: Board, attempt?: CreateSubmission) => {
-    if (editing) {
+    if (draft) {
+      recordShortcutMoves(draft, next, movedLinkOrigins.current);
       setDraft(next);
       return;
     }
@@ -137,7 +138,7 @@ function ShortcutsPage() {
                   editingBase.current = null;
                   deletedLinkIds.current.clear();
                   deletedGroupIds.current.clear();
-                  movedLinkIds.current.clear();
+                  movedLinkOrigins.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   mutation.reset();
@@ -165,7 +166,7 @@ function ShortcutsPage() {
                           deletedLinkIds.current,
                           automaticLinkGroups.current,
                           deletedGroupIds.current,
-                          movedLinkIds.current,
+                          movedLinkOrigins.current,
                         ),
                       );
                       editingBase.current = structuredClone(latest);
@@ -178,7 +179,7 @@ function ShortcutsPage() {
                     editingBase.current = null;
                     deletedLinkIds.current.clear();
                     deletedGroupIds.current.clear();
-                    movedLinkIds.current.clear();
+                    movedLinkOrigins.current.clear();
                     automaticLinkGroups.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
@@ -200,7 +201,7 @@ function ShortcutsPage() {
                   editingBase.current = structuredClone(board!);
                   deletedLinkIds.current.clear();
                   deletedGroupIds.current.clear();
-                  movedLinkIds.current.clear();
+                  movedLinkOrigins.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));

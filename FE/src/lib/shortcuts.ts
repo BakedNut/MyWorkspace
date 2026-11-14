@@ -183,6 +183,24 @@ function mergeShortcutItems<T extends { id: string }>(
   ).map((id) => merged.get(id)!);
 }
 
+export function recordShortcutMoves(
+  before: ShortcutBoard,
+  after: ShortcutBoard,
+  movedLinkOrigins: Map<string, string>,
+): void {
+  for (const group of after.groups) {
+    for (const link of group.links) {
+      const previous = before.groups.find((item) =>
+        item.links.some((entry) => entry.id === link.id),
+      );
+      if (!previous || previous.id === group.id) continue;
+      const origin = movedLinkOrigins.get(link.id) ?? previous.id;
+      if (group.id === origin) movedLinkOrigins.delete(link.id);
+      else movedLinkOrigins.set(link.id, origin);
+    }
+  }
+}
+
 export function reconcileShortcutBoard(
   base: ShortcutBoard,
   draft: ShortcutBoard,
@@ -190,7 +208,7 @@ export function reconcileShortcutBoard(
   deletedLinkIds: ReadonlySet<string> = new Set(),
   automaticLinkGroups: Map<string, string> = new Map(),
   deletedGroupIds: ReadonlySet<string> = new Set(),
-  movedLinkIds: Set<string> = new Set(),
+  movedLinkOrigins: Map<string, string> = new Map(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
@@ -202,16 +220,11 @@ export function reconcileShortcutBoard(
     ...link,
     groupId: automaticLinkGroups.get(link.id) ?? link.groupId,
   }));
-  // Fallback can return a directly moved link to its original group.
-  for (const link of draftLinks) {
-    const before = comparisonLinks.find((item) => item.id === link.id);
-    if (before && before.groupId !== link.groupId) movedLinkIds.add(link.id);
-  }
   const mergedLinks = mergeShortcutItems(
     comparisonLinks,
     draftLinks,
     latestLinks,
-    movedLinkIds,
+    new Set(movedLinkOrigins.keys()),
   ).filter((link) => !deletedLinkIds.has(link.id));
   for (const saved of latestLinks) {
     const original = baseLinks.find((link) => link.id === saved.id);
@@ -255,6 +268,17 @@ export function reconcileShortcutBoard(
     const before = comparisonLinks.find((item) => item.id === link.id);
     if (!edited || edited.groupId === before?.groupId)
       automaticLinkGroups.set(link.id, destination.id);
+  }
+  for (const [id] of movedLinkOrigins) {
+    const original = baseLinks.find((link) => link.id === id);
+    const saved = latestLinks.find((link) => link.id === id);
+    if (
+      original &&
+      saved &&
+      original.groupId !== saved.groupId &&
+      mergedLinks.some((link) => link.id === id && link.groupId === saved.groupId)
+    )
+      movedLinkOrigins.delete(id);
   }
   return {
     revision: latest.revision,

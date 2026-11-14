@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { moveShortcut, normalizeShortcutUrl, reconcileShortcutBoard } from "./shortcuts";
+import {
+  moveShortcut,
+  normalizeShortcutUrl,
+  reconcileShortcutBoard,
+  recordShortcutMoves,
+} from "./shortcuts";
 import type { ShortcutBoard } from "@/types/domain";
 
 const board: ShortcutBoard = {
@@ -541,7 +546,8 @@ it.each([false, true])(
     latest.revision++;
     latest.groups.pop();
     const placements = new Map<string, string>();
-    const moved = new Set<string>();
+    const moved = new Map<string, string>();
+    recordShortcutMoves(base, draft, moved);
     const deleted = new Set<string>();
     const merged = reconcileShortcutBoard(
       base,
@@ -574,3 +580,95 @@ it.each([false, true])(
     expect(next.groups[0]!.links.map((link) => link.id)).toEqual(deleteLink ? [] : ["x"]);
   },
 );
+
+it("직접 이동의 원본 분류를 유지하고 사용자가 이동을 되돌리면 기록을 지운다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      {
+        id: "a",
+        name: "A",
+        collapsed: false,
+        links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+      },
+      { id: "b", name: "B", collapsed: false, links: [] },
+      { id: "c", name: "C", collapsed: false, links: [] },
+    ],
+  };
+  const moved = new Map<string, string>();
+  const b = moveShortcut(base, "x", "b");
+  recordShortcutMoves(base, b, moved);
+  expect(moved.get("x")).toBe("a");
+  const c = moveShortcut(b, "x", "c");
+  recordShortcutMoves(b, c, moved);
+  expect(moved.get("x")).toBe("a");
+  recordShortcutMoves(base, base, moved);
+  expect(moved.get("x")).toBe("a");
+  const undone = moveShortcut(c, "x", "a");
+  recordShortcutMoves(c, undone, moved);
+  expect(moved.size).toBe(0);
+});
+
+it.each([false, true])("서버 이동을 수용한 경우에만 이전 이동 기록을 정리한다 %s", (override) => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      {
+        id: "a",
+        name: "A",
+        collapsed: false,
+        links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+      },
+      ...["b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    ],
+  };
+  const draft = moveShortcut(base, "x", "b");
+  const moved = new Map<string, string>();
+  recordShortcutMoves(base, draft, moved);
+  const latest = structuredClone(base);
+  latest.revision++;
+  latest.groups = latest.groups.filter((group) => group.id !== "b");
+  const placements = new Map<string, string>();
+  const restored = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(restored.groups[0]!.links[0]!.id).toBe("x");
+  let local = restored;
+  if (override) {
+    local = moveShortcut(restored, "x", "d");
+    recordShortcutMoves(restored, local, moved);
+  }
+  const remote = moveShortcut(latest, "x", "c");
+  remote.revision++;
+  const merged = reconcileShortcutBoard(
+    latest,
+    local,
+    remote,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(moved.has("x")).toBe(override);
+  const deleted = structuredClone(remote);
+  deleted.revision++;
+  for (const group of deleted.groups) group.links = [];
+  const final = reconcileShortcutBoard(
+    remote,
+    merged,
+    deleted,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(final.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(
+    override ? ["x"] : [],
+  );
+});

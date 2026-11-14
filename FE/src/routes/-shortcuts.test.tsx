@@ -992,3 +992,93 @@ it.each(["keep", "delete", "cancel"])(
     );
   },
 );
+
+it.each(["server-c", "server-b", "undo", "override"])(
+  "효력을 잃은 직접 이동 기록을 후속 병합에서 정리한다 %s",
+  async (mode) => {
+    let persisted: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        ...["b", "c", "d"].map((id) => ({
+          id,
+          name: id.toUpperCase(),
+          collapsed: false,
+          links: [],
+        })),
+      ],
+    };
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      const conflicts = mode === "undo" ? 2 : 3;
+      if (calls > conflicts) {
+        persisted = { ...structuredClone(input), revision: input.revision + 1 };
+        return persisted;
+      }
+      if (calls === 1) {
+        if (mode === "undo") persisted.groups.find((group) => group.id === "c")!.name = "서버 분류";
+        else persisted.groups = persisted.groups.filter((group) => group.id !== "b");
+      } else if (calls === 2 && mode !== "undo") {
+        const link = persisted.groups.flatMap((group) => group.links)[0]!;
+        for (const group of persisted.groups) group.links = [];
+        const destination = mode === "server-b" ? "b" : "c";
+        if (!persisted.groups.some((group) => group.id === destination))
+          persisted.groups.push({
+            id: destination,
+            name: destination.toUpperCase(),
+            collapsed: false,
+            links: [],
+          });
+        persisted.groups.find((group) => group.id === destination)!.links = [link];
+      } else for (const group of persisted.groups) group.links = [];
+      persisted.revision++;
+      throw new ApiError("다른 곳", "CONFLICT");
+    });
+    setup();
+    await screen.findByRole("link", { name: "X 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: "정리" }));
+    const move = async (group: string) => {
+      fireEvent.click(screen.getByRole("button", { name: "X 바로가기 수정" }));
+      fireEvent.change(screen.getByLabelText("분류"), { target: { value: group } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "완료" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    };
+    const merge = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+      await screen.findByRole("button", { name: "저장" });
+    };
+    await move("b");
+    await merge();
+    expect(
+      screen.getByRole("button", { name: mode === "undo" ? "B 1" : "A 1" }),
+    ).toBeInTheDocument();
+    if (mode === "undo") await move("a");
+    if (mode === "override") await move("d");
+    await merge();
+    if (mode !== "undo") {
+      expect(
+        screen.getByRole("button", {
+          name: mode === "override" ? "D 1" : mode === "server-b" ? "B 1" : "C 1",
+        }),
+      ).toBeInTheDocument();
+      await merge();
+    }
+    expect(screen.queryByRole("button", { name: "X 바로가기 수정" }) !== null).toBe(
+      mode === "override",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await screen.findByRole("button", { name: "정리" });
+    const links = persisted.groups.flatMap((group) => group.links);
+    expect(links.map((link) => link.id)).toEqual(mode === "override" ? ["x"] : []);
+    if (mode === "override")
+      expect(persisted.groups.find((group) => group.id === "d")!.links[0]!.id).toBe("x");
+  },
+);
