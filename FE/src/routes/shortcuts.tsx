@@ -36,6 +36,7 @@ function ShortcutsPage() {
   const editingBase = useRef<Board | null>(null);
   const deletedLinkIds = useRef(new Set<string>());
   const deletedGroupIds = useRef(new Set<string>());
+  const movedLinkIds = useRef(new Set<string>());
   const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
@@ -136,6 +137,7 @@ function ShortcutsPage() {
                   editingBase.current = null;
                   deletedLinkIds.current.clear();
                   deletedGroupIds.current.clear();
+                  movedLinkIds.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   mutation.reset();
@@ -163,6 +165,7 @@ function ShortcutsPage() {
                           deletedLinkIds.current,
                           automaticLinkGroups.current,
                           deletedGroupIds.current,
+                          movedLinkIds.current,
                         ),
                       );
                       editingBase.current = structuredClone(latest);
@@ -175,6 +178,7 @@ function ShortcutsPage() {
                     editingBase.current = null;
                     deletedLinkIds.current.clear();
                     deletedGroupIds.current.clear();
+                    movedLinkIds.current.clear();
                     automaticLinkGroups.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
@@ -196,6 +200,7 @@ function ShortcutsPage() {
                   editingBase.current = structuredClone(board!);
                   deletedLinkIds.current.clear();
                   deletedGroupIds.current.clear();
+                  movedLinkIds.current.clear();
                   automaticLinkGroups.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));

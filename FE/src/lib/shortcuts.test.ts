@@ -520,3 +520,57 @@ it.each(["name", "collapsed", "both"])(
     ).toEqual([]);
   },
 );
+
+it.each([false, true])(
+  "직접 이동의 대체 배치가 원래 분류여도 이동 기록을 보존한다 %s",
+  (deleteLink) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        { id: "b", name: "B", collapsed: false, links: [] },
+      ],
+    };
+    const draft = moveShortcut(base, "x", "b");
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups.pop();
+    const placements = new Map<string, string>();
+    const moved = new Set<string>();
+    const deleted = new Set<string>();
+    const merged = reconcileShortcutBoard(
+      base,
+      draft,
+      latest,
+      deleted,
+      placements,
+      new Set(),
+      moved,
+    );
+    expect(moved.has("x")).toBe(true);
+    expect(merged.groups[0]!.id).toBe("a");
+    expect(merged.groups[0]!.links[0]!.id).toBe("x");
+    if (deleteLink) {
+      deleted.add("x");
+      merged.groups[0]!.links = [];
+    }
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      merged,
+      removed,
+      deleted,
+      placements,
+      new Set(),
+      moved,
+    );
+    expect(next.groups[0]!.links.map((link) => link.id)).toEqual(deleteLink ? [] : ["x"]);
+  },
+);

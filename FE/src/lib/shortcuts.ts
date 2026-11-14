@@ -146,7 +146,12 @@ export function moveShortcut(
 }
 
 // Keep unchanged fields from the server and apply only edits made since the draft began.
-function mergeShortcutItems<T extends { id: string }>(base: T[], draft: T[], latest: T[]): T[] {
+function mergeShortcutItems<T extends { id: string }>(
+  base: T[],
+  draft: T[],
+  latest: T[],
+  retainedIds: ReadonlySet<string> = new Set(),
+): T[] {
   const original = new Map(base.map((item) => [item.id, item]));
   const local = new Map(draft.map((item) => [item.id, item]));
   const remote = new Map(latest.map((item) => [item.id, item]));
@@ -160,7 +165,8 @@ function mergeShortcutItems<T extends { id: string }>(base: T[], draft: T[], lat
       continue;
     }
     if (!saved) {
-      if (JSON.stringify(edited) !== JSON.stringify(before)) merged.set(id, edited);
+      if (retainedIds.has(id) || JSON.stringify(edited) !== JSON.stringify(before))
+        merged.set(id, edited);
       continue;
     }
     const item = { ...saved };
@@ -184,6 +190,7 @@ export function reconcileShortcutBoard(
   deletedLinkIds: ReadonlySet<string> = new Set(),
   automaticLinkGroups: Map<string, string> = new Map(),
   deletedGroupIds: ReadonlySet<string> = new Set(),
+  movedLinkIds: Set<string> = new Set(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
@@ -195,9 +202,17 @@ export function reconcileShortcutBoard(
     ...link,
     groupId: automaticLinkGroups.get(link.id) ?? link.groupId,
   }));
-  const mergedLinks = mergeShortcutItems(comparisonLinks, draftLinks, latestLinks).filter(
-    (link) => !deletedLinkIds.has(link.id),
-  );
+  // Fallback can return a directly moved link to its original group.
+  for (const link of draftLinks) {
+    const before = comparisonLinks.find((item) => item.id === link.id);
+    if (before && before.groupId !== link.groupId) movedLinkIds.add(link.id);
+  }
+  const mergedLinks = mergeShortcutItems(
+    comparisonLinks,
+    draftLinks,
+    latestLinks,
+    movedLinkIds,
+  ).filter((link) => !deletedLinkIds.has(link.id));
   for (const saved of latestLinks) {
     const original = baseLinks.find((link) => link.id === saved.id);
     if (

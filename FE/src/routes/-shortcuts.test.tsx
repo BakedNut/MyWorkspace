@@ -933,3 +933,62 @@ it("임시 복원 분류의 이름과 접힘 편집을 다음 저장 충돌 후�
     links: [{ id: "x", name: "서버 수정 X", url: "https://example.com/X" }],
   });
 });
+
+it.each(["keep", "delete", "cancel"])(
+  "직접 이동 후 원래 분류로 복귀해도 이동 기록을 정리 세션에 유지한다 %s",
+  async (action) => {
+    let persisted: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        { id: "b", name: "B", collapsed: false, links: [] },
+      ],
+    };
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) persisted.groups.pop();
+      else if (calls === 2) persisted.groups[0]!.links = [];
+      else {
+        persisted = { ...structuredClone(input), revision: input.revision + 1 };
+        return persisted;
+      }
+      persisted.revision++;
+      throw new ApiError("다른 곳", "CONFLICT");
+    });
+    setup();
+    await screen.findByRole("link", { name: "X 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: "정리" }));
+    fireEvent.click(screen.getByRole("button", { name: "X 바로가기 수정" }));
+    fireEvent.change(screen.getByLabelText("분류"), { target: { value: "b" } });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "X 바로가기 수정" });
+    expect(screen.getByRole("button", { name: "A 1" })).toBeInTheDocument();
+    if (action === "delete")
+      fireEvent.click(screen.getByRole("button", { name: "X 바로가기 삭제" }));
+    if (action === "cancel") {
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      fireEvent.click(await screen.findByRole("button", { name: "정리" }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "저장" });
+    expect(screen.queryByRole("button", { name: "X 바로가기 수정" }) !== null).toBe(
+      action === "keep",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await screen.findByRole("button", { name: "정리" });
+    expect(persisted.groups[0]!.links.map((link) => link.id)).toEqual(
+      action === "keep" ? ["x"] : [],
+    );
+  },
+);
