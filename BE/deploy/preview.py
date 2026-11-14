@@ -110,6 +110,11 @@ for path,asset in json.loads(sys.argv[2]).items():
         data = response.read(asset['size']+1)
         if len(data)!=asset['size']:
             raise RuntimeError('Served frontend size mismatch: '+path)
+        for header in response.headers.get_all('Content-Length') or []:
+            for value in header.split(','):
+                value = value.strip()
+                if not value.isdecimal() or int(value)!=len(data):
+                    raise RuntimeError('Served frontend Content-Length mismatch: '+path)
         if hashlib.sha256(data).hexdigest()!=asset['sha256']:
             raise RuntimeError('Served frontend content mismatch: '+path)
 """

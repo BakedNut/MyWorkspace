@@ -249,7 +249,7 @@ class FrontendVerificationTest(unittest.TestCase):
             self.assertEqual(manifest["/entry"]["size"], (dist / "entry").stat().st_size)
 
     @contextlib.contextmanager
-    def served_frontend(self, redirects=None, encodings=None):
+    def served_frontend(self, redirects=None, encodings=None, lengths=None):
         bodies = {"/": b'<script src="/assets/app.js"></script>',
                   "/assets/app.js": b'console.log("ready")',
                   "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
@@ -268,6 +268,8 @@ class FrontendVerificationTest(unittest.TestCase):
                     values = [values]
                 for value in values or []:
                     self.send_header("Content-Type", value)
+                for value in (lengths or {}).get(self.path, []):
+                    self.send_header("Content-Length", value)
                 for value in (encodings or {}).get(self.path, []):
                     self.send_header("Content-Encoding", value)
                 self.end_headers()
@@ -356,6 +358,20 @@ class FrontendVerificationTest(unittest.TestCase):
                     with self.subTest(path=path, encoding=values), self.assertRaises(subprocess.CalledProcessError):
                         preview.verify_frontend(expected)
                 encodings[path] = []
+
+    def test_content_length_must_match_the_received_body(self):
+        lengths = {}
+        with self.served_frontend(lengths=lengths) as (bodies, media, expected):
+            for path in ("/", "/assets/app.js"):
+                size = len(bodies[path])
+                for values in ([str(size)], ["00" + str(size)], [str(size), str(size)], [f"{size}, {size}"]):
+                    lengths[path] = values
+                    preview.verify_frontend(expected)
+                for values in ([str(size + 10)], [str(size - 1)], ["-1"], ["bad"], [""], [str(size), str(size + 1)], [f"{size}, {size + 1}"]):
+                    lengths[path] = values
+                    with self.subTest(path=path, content_length=values), self.assertRaises(subprocess.CalledProcessError):
+                        preview.verify_frontend(expected)
+                lengths[path] = []
 
     def test_home_redirect_must_end_at_root_route(self):
         redirects = {}
