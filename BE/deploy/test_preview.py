@@ -3,6 +3,7 @@ import hashlib
 import io
 import http.server
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
@@ -186,13 +187,27 @@ class PreviewDeploymentTest(unittest.TestCase):
 
     def test_frontend_content_verification_failure_rolls_back_before_receipt(self):
         def run(ct, args, data=None):
-            if args[0] == "python3" and len(args) == 5 and args[3] == preview.WEB_URL:
+            if preview.WEB_URL in args:
                 raise subprocess.CalledProcessError(1, args)
             return self.server_run(ct, args, data)
         self.run.side_effect = run
         with self.assertRaises(subprocess.CalledProcessError):
             preview.deploy(self.root)
         self.assert_restored()
+
+    def test_frontend_timeout_rolls_back_and_releases_deployment_lock(self):
+        def run(ct, args, data=None):
+            if preview.WEB_URL in args:
+                raise subprocess.CalledProcessError(124, args)
+            return self.server_run(ct, args, data)
+        self.run.side_effect = run
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            preview.deploy(self.root)
+        self.assertEqual(failure.exception.returncode, 124)
+        self.assert_restored()
+        self.run.side_effect = self.server_run
+        preview.deploy(self.root)
+        self.private.assert_called_once()
 
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -231,6 +246,7 @@ class FrontendVerificationTest(unittest.TestCase):
             self.assertIn("/assets/app.css", manifest)
             self.assertEqual(manifest["/assets/app.js"]["sha256"], hashlib.sha256((dist / "assets/app.js").read_bytes()).hexdigest())
             self.assertEqual(manifest["/entry"]["kind"], "javascript")
+            self.assertEqual(manifest["/entry"]["size"], (dist / "entry").stat().st_size)
 
     @contextlib.contextmanager
     def served_frontend(self, redirects=None):
@@ -260,7 +276,7 @@ class FrontendVerificationTest(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript"}
-        expected = {path: {"sha256": hashlib.sha256(body).hexdigest(), "kind": kinds[path]}
+        expected = {path: {"sha256": hashlib.sha256(body).hexdigest(), "kind": kinds[path], "size": len(body)}
                     for path, body in bodies.items()}
         def local_run(ct, args, data=None):
             return subprocess.run(args, input=data, text=True, capture_output=True, check=True).stdout
@@ -281,6 +297,50 @@ class FrontendVerificationTest(unittest.TestCase):
             bodies["/assets/app.js"] = bodies["/"]
             with self.assertRaises(subprocess.CalledProcessError):
                 preview.verify_frontend(expected)
+
+    def test_streams_have_a_total_deadline_and_bounded_body_read(self):
+        for mode in ("oversize", "drip"):
+            with self.subTest(mode=mode):
+                stop = threading.Event()
+                size = 16 if mode == "oversize" else 1000
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    def do_GET(self):
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/javascript")
+                        self.end_headers()
+                        try:
+                            if mode == "oversize":
+                                self.wfile.write(b"x" * (size + 1))
+                                self.wfile.flush()
+                                stop.wait(5)
+                            else:
+                                while not stop.wait(0.05):
+                                    self.wfile.write(b"x")
+                                    self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                    def log_message(self, *args):
+                        pass
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                def local_run(ct, args, data=None):
+                    return subprocess.run(args, input=data, text=True, capture_output=True, check=True, timeout=3).stdout
+                expected = {"/stream.js": {"sha256": "unused", "kind": "javascript", "size": size}}
+                try:
+                    with patch.object(preview, "WEB_URL", f"http://127.0.0.1:{server.server_port}"), patch.object(preview, "FRONTEND_VERIFY_SECONDS", 1, create=True), patch.object(preview, "run", side_effect=local_run):
+                        started = time.monotonic()
+                        with self.assertRaises(subprocess.CalledProcessError) as failure:
+                            preview.verify_frontend(expected)
+                        self.assertLess(time.monotonic() - started, 3)
+                        self.assertEqual(failure.exception.returncode, 1 if mode == "oversize" else 124)
+                        if mode == "oversize":
+                            self.assertIn("size mismatch", failure.exception.stderr)
+                finally:
+                    stop.set()
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=2)
 
     def test_home_redirect_must_end_at_root_route(self):
         redirects = {}

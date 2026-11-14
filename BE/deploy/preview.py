@@ -14,6 +14,7 @@ from initialize import run, private_file
 
 
 WEB_URL = "http://127.0.0.1:8088"
+FRONTEND_VERIFY_SECONDS = 30
 LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
@@ -63,7 +64,7 @@ def frontend_manifest(dist):
         if path.is_file() and path.suffix in (".js", ".mjs", ".css"):
             kind = "css" if path.suffix == ".css" else "javascript"
             files.setdefault("/" + path.relative_to(dist).as_posix(), (path, kind))
-    return {url: {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "kind": kind}
+    return {url: {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "kind": kind, "size": path.stat().st_size}
             for url, (path, kind) in files.items()}
 
 
@@ -103,10 +104,13 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
-        if hashlib.sha256(response.read()).hexdigest()!=asset['sha256']:
+        data = response.read(asset['size']+1)
+        if len(data)!=asset['size']:
+            raise RuntimeError('Served frontend size mismatch: '+path)
+        if hashlib.sha256(data).hexdigest()!=asset['sha256']:
             raise RuntimeError('Served frontend content mismatch: '+path)
 """
-    run(200, ["python3", "-c", program, WEB_URL, json.dumps(expected)])
+    run(200, ["timeout", "--kill-after=2s", f"{FRONTEND_VERIFY_SECONDS}s", "python3", "-c", program, WEB_URL, json.dumps(expected)])
 
 
 def backup(stamp):
