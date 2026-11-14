@@ -23,6 +23,7 @@ export function ShortcutDialog({
   groups,
   currentGroupId,
   baselineGroupSelectionVersion,
+  requiresRecreation = false,
   onClose,
   onRestoreFocus,
   onSaveLink,
@@ -33,6 +34,7 @@ export function ShortcutDialog({
   groups: ShortcutGroup[];
   currentGroupId?: string | undefined;
   baselineGroupSelectionVersion?: number | undefined;
+  requiresRecreation?: boolean;
   onClose(): void;
   onRestoreFocus(): void;
   onSaveLink(input: {
@@ -191,7 +193,7 @@ export function ShortcutDialog({
               취소
             </Button>
             <Button type="submit" disabled={busy} variant={deleting ? "destructive" : "default"}>
-              {busy ? "처리 중…" : deleting ? "삭제" : "완료"}
+              {busy ? "처리 중…" : deleting ? "삭제" : requiresRecreation ? "다시 추가" : "완료"}
             </Button>
           </DialogFooter>
         </form>

@@ -1145,6 +1145,68 @@ it.each([false, true])(
   },
 );
 
+it.each(
+  ["link", "group"].flatMap((kind) => ["cancel", "recreate"].map((action) => ({ kind, action }))),
+)(
+  "응답 유실 뒤 삭제된 추가 항목은 재생성 전에 확인한다 $kind / $action",
+  async ({ kind, action }) => {
+    let persisted = structuredClone(initial);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        persisted = { ...structuredClone(initial), revision: input.revision + 2 };
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: kind === "group" ? "분류 추가" : "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "불확실한 추가" } });
+    if (kind === "link")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await within(modal).findByRole("button", { name: "다시 추가" });
+    expect(within(modal).getByRole("alert")).toHaveTextContent("최신 목록");
+    expect(within(modal).getByLabelText("이름")).toHaveValue("불확실한 추가");
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(persisted.groups).toEqual(initial.groups);
+    if (action === "cancel") {
+      fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(save).toHaveBeenCalledTimes(2);
+      fireEvent.click(
+        screen.getByRole("button", { name: kind === "group" ? "분류 추가" : "추가" }),
+      );
+      expect(
+        within(screen.getByRole("dialog")).getByRole("button", { name: "완료" }),
+      ).toBeInTheDocument();
+    } else {
+      fireEvent.click(within(modal).getByRole("button", { name: "다시 추가" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(save).toHaveBeenCalledTimes(3);
+      const ids = (board: ShortcutBoard) =>
+        kind === "group"
+          ? board.groups.filter((group) => group.name === "불확실한 추가").map((group) => group.id)
+          : board.groups
+              .flatMap((group) => group.links)
+              .filter((link) => link.name === "불확실한 추가")
+              .map((link) => link.id);
+      expect(ids(persisted)).toEqual(ids(save.mock.calls[0]![0]));
+      expect(ids(persisted)).toHaveLength(1);
+    }
+  },
+);
+
 it.each(["https:example.com", "https:/example.com", "https://example.com/path"])(
   "기존 URL은 파싱한 절대 주소로 연다 %s",
   async (url) => {

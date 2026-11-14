@@ -39,6 +39,7 @@ function ShortcutsPage() {
   const movedLinkOrigins = useRef(new Map<string, string>());
   const automaticLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
+  const [requiresRecreation, setRequiresRecreation] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
   const attemptedCreate = useRef<(CreateSubmission & { board: Board; uncertain: boolean }) | null>(
     null,
@@ -48,6 +49,7 @@ function ShortcutsPage() {
   );
   const openDialog = (target: ShortcutDialogTarget) => {
     attemptedCreate.current = null;
+    setRequiresRecreation(false);
     setDialog({ ...target, operationId: newId() });
   };
   const mutation = useMutation({
@@ -104,6 +106,18 @@ function ShortcutsPage() {
       });
     }
     pending.uncertain = false;
+    const present =
+      dialog?.kind === "link"
+        ? confirmed.groups.some((group) =>
+            group.links.some((link) => link.id === dialog.operationId),
+          )
+        : confirmed.groups.some((group) => group.id === dialog?.operationId);
+    if (!present) {
+      setRequiresRecreation(true);
+      throw new Error(
+        "최신 목록에 이 항목이 없습니다. 다른 곳에서 삭제했을 수 있습니다. 다시 만들려면 ‘다시 추가’를 누르세요.",
+      );
+    }
     return confirmed;
   };
 
@@ -286,6 +300,7 @@ function ShortcutsPage() {
               }}
               target={dialog}
               groups={board.groups}
+              requiresRecreation={requiresRecreation}
               currentGroupId={
                 dialog.kind === "link"
                   ? board.groups.find((group) =>
@@ -302,6 +317,7 @@ function ShortcutsPage() {
               }
               onClose={() => {
                 setDialog(null);
+                setRequiresRecreation(false);
                 mutation.reset();
               }}
               onSaveLink={async ({
