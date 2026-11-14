@@ -212,11 +212,8 @@ export function reconcileShortcutBoard(
   }
   const properties = (board: ShortcutBoard) =>
     board.groups.map(({ links: _links, ...group }) => group);
-  const groups: ShortcutBoard["groups"] = mergeShortcutItems(
-    properties(base),
-    properties(draft),
-    properties(latest),
-  )
+  const mergedGroups = mergeShortcutItems(properties(base), properties(draft), properties(latest));
+  const groups: ShortcutBoard["groups"] = mergedGroups
     .filter(
       (group) =>
         !deletedGroupIds.has(group.id) &&
@@ -232,7 +229,7 @@ export function reconcileShortcutBoard(
     const original = base.groups.find((group) => group.links.some((item) => item.id === link.id));
     let destination = groups.find((group) => group.id === original?.id) ?? groups[0];
     if (!destination) {
-      const source = [...latest.groups, ...draft.groups, ...base.groups].find(
+      const source = [...mergedGroups, ...latest.groups, ...draft.groups, ...base.groups].find(
         (group) => group.id === link.groupId,
       )!;
       destination = { ...source, links: [] };

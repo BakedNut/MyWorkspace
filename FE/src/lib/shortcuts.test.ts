@@ -473,3 +473,50 @@ it.each([false, true])(
     expect(final.groups[0]!.links.map((link) => link.id)).toEqual(explicitDelete ? [] : ["x"]);
   },
 );
+
+it.each(["name", "collapsed", "both"])(
+  "임시 복원 분류의 병합된 속성도 후속 충돌에서 유지한다 %s",
+  (field) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    if (field !== "collapsed") restored.groups[0]!.name = "직접 수정 A";
+    if (field !== "name") restored.groups[0]!.collapsed = true;
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[0]!.name = "서버 수정 A";
+    updated.groups[0]!.collapsed = field === "name";
+    updated.groups[0]!.links[0]!.name = "서버 수정 X";
+    const merged = reconcileShortcutBoard(
+      latest,
+      restored,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(merged.groups[0]!.name).toBe(field === "collapsed" ? "서버 수정 A" : "직접 수정 A");
+    expect(merged.groups[0]!.collapsed).toBe(true);
+    expect(merged.groups[0]!.links[0]!.name).toBe("서버 수정 X");
+    const removed = structuredClone(updated);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    expect(
+      reconcileShortcutBoard(updated, merged, removed, new Set(), placements, deletedGroups).groups,
+    ).toEqual([]);
+  },
+);

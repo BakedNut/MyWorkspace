@@ -883,3 +883,53 @@ it.each([false, true])(
     );
   },
 );
+
+it("임시 복원 분류의 이름과 접힘 편집을 다음 저장 충돌 후에도 저장한다", async () => {
+  let persisted: ShortcutBoard = {
+    revision: 1,
+    groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+  };
+  vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+  let calls = 0;
+  vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+    calls++;
+    if (calls === 1)
+      persisted.groups[0]!.links = [{ id: "x", name: "X", url: "https://example.com/X" }];
+    else if (calls === 2) persisted.groups[0]!.links[0]!.name = "서버 수정 X";
+    else {
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    }
+    persisted.revision++;
+    throw new ApiError("다른 곳", "CONFLICT");
+  });
+  setup();
+  await screen.findByRole("button", { name: "A 0" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "A 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+  await screen.findByRole("button", { name: "A 1" });
+  fireEvent.click(screen.getByRole("button", { name: "A 분류 이름 수정" }));
+  fireEvent.change(screen.getByLabelText("이름"), { target: { value: "직접 수정 A" } });
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "완료" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "직접 수정 A 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+  await screen.findByRole("button", { name: "저장" });
+  expect(screen.getByRole("button", { name: "직접 수정 A 1" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "정리" });
+  expect(persisted.groups[0]).toEqual({
+    id: "a",
+    name: "직접 수정 A",
+    collapsed: true,
+    links: [{ id: "x", name: "서버 수정 X", url: "https://example.com/X" }],
+  });
+});
