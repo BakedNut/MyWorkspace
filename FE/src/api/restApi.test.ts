@@ -45,3 +45,77 @@ it("통신 실패를 표시하고 인증 만료 시 화면에 알린다", async 
   await expect(request("/timetable")).rejects.toMatchObject({ code: "NETWORK" });
   window.removeEventListener("myworkspace:unauthorized", handler);
 });
+
+it("128KiB를 넘는 유효한 보드는 전송 전에 조정 방법을 안내한다", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const url = "https://example.com/" + "a".repeat(2048 - "https://example.com/".length);
+  const input = {
+    revision: 1,
+    groups: [
+      {
+        id: "group",
+        name: "분류",
+        collapsed: false,
+        links: Array.from({ length: 64 }, (_, index) => ({
+          id: `link-${index}`,
+          name: "사이트",
+          url,
+        })),
+      },
+    ],
+  };
+  await expect(restApi.shortcuts.save(input)).rejects.toMatchObject({
+    code: "VALIDATION",
+    message: expect.stringContaining("긴 URL이나 이름을 줄이거나"),
+  });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("JSON의 문자 수가 아닌 UTF-8 바이트 수로 요청 한도를 검사한다", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const input = {
+    revision: 1,
+    groups: [
+      {
+        id: "group",
+        name: "분류",
+        collapsed: false,
+        links: Array.from({ length: 64 }, (_, index) => ({
+          id: `link-${index}`,
+          name: "사이트",
+          url: "https://example.com/" + "가".repeat(1000),
+        })),
+      },
+    ],
+  };
+  expect(JSON.stringify(input).length).toBeLessThan(128 * 1024);
+  await expect(restApi.shortcuts.save(input)).rejects.toMatchObject({ code: "VALIDATION" });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("128KiB 이하 보드는 기존 API로 전송한다", async () => {
+  const input = { revision: 1, groups: [] };
+  const fetcher = vi.fn(
+    async (url: string) =>
+      new Response(
+        JSON.stringify(
+          url === "/api/auth/csrf" ? { token: "test", headerName: "X-CSRF-TOKEN" } : input,
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await expect(restApi.shortcuts.save(input)).resolves.toEqual(input);
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/shortcuts",
+    expect.objectContaining({ method: "PUT", body: JSON.stringify(input) }),
+  );
+});
+
+it.each(["http://4294967296/", "http://09/", "http://[fe80::1%25eth0]/", "javascript:alert(1)"])(
+  "기존 잘못된 URL은 아이콘 요청에서 개별 제외한다 %s",
+  (url) => {
+    expect(restApi.shortcuts.iconUrl({ id: "bad", name: "오류", url })).toBeNull();
+  },
+);

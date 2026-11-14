@@ -196,3 +196,21 @@ export interface WolDevice {
 export interface WakeResult {
   sentAt: string; // ISO — magic packet sent (does NOT mean booted)
 }
+
+export interface ShortcutLink {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface ShortcutGroup {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  links: ShortcutLink[];
+}
+
+export interface ShortcutBoard {
+  revision: number;
+  groups: ShortcutGroup[];
+}

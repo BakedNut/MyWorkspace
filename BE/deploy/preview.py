@@ -1,0 +1,238 @@
+"""Update the already provisioned LXC preview while preserving its data and config."""
+from pathlib import Path
+from html.parser import HTMLParser
+from urllib.parse import unquote, urljoin, urlsplit
+import datetime
+import gzip
+import fcntl
+import hashlib
+import json
+import subprocess
+import sys
+import time
+from initialize import run, private_file
+
+
+WEB_URL = "http://127.0.0.1:8088"
+FRONTEND_VERIFY_SECONDS = 30
+LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
+JAR = "/opt/myworkspace-preview/current.jar"
+FRONTEND = "/var/www/myworkspace-preview/current"
+
+
+def ready(port=8081):
+    for attempt in range(90):
+        try:
+            response = run(200, ["curl", "--fail", "--silent", "--max-time", "1", f"http://127.0.0.1:{port}/api/health"])
+            if json.loads(response).get("status") == "ok":
+                return True
+        except (subprocess.CalledProcessError, ValueError):
+            pass
+        time.sleep(1)
+    return False
+
+
+class FrontendAssets(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == "script" and attrs.get("src"):
+            self.urls.append((attrs["src"], "javascript"))
+        if tag == "link" and attrs.get("rel") in ("modulepreload", "stylesheet") and attrs.get("href"):
+            kind = "javascript" if attrs["rel"] == "modulepreload" else "css"
+            self.urls.append((attrs["href"], kind))
+
+
+def frontend_manifest(dist):
+    dist = dist.resolve()
+    index = dist / "index.html"
+    parser = FrontendAssets()
+    parser.feed(index.read_text())
+    files = {"/": (index, "html")}
+    for reference, kind in parser.urls:
+        url = urlsplit(urljoin("/", reference))
+        if url.scheme or url.netloc:
+            continue
+        path = (dist / unquote(url.path).lstrip("/")).resolve()
+        if not path.is_relative_to(dist) or not path.is_file():
+            raise ValueError("Referenced frontend asset is missing: " + reference)
+        files[url.path + ("?" + url.query if url.query else "")] = (path, kind)
+    for path in dist.rglob("*"):
+        if path.is_file() and path.suffix in (".js", ".mjs", ".css"):
+            kind = "css" if path.suffix == ".css" else "javascript"
+            files.setdefault("/" + path.relative_to(dist).as_posix(), (path, kind))
+    return {url: {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "kind": kind, "size": path.stat().st_size}
+            for url, (path, kind) in files.items()}
+
+
+def verify_frontend(expected):
+    program = """import hashlib,json,sys,urllib.request,urllib.parse
+
+def origin(url):
+    parsed = urllib.parse.urlsplit(url)
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme=='https' else 80
+    return parsed.scheme,parsed.hostname,port
+
+class SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,request,fp,code,message,headers,new_url):
+        if origin(request.full_url)!=origin(new_url):
+            raise RuntimeError('Cross-origin frontend redirect: '+request.full_url)
+        current_directory = urllib.parse.urlsplit(urllib.parse.urljoin(request.full_url,'.')).path
+        next_directory = urllib.parse.urlsplit(urllib.parse.urljoin(new_url,'.')).path
+        if current_directory!=next_directory:
+            raise RuntimeError('Frontend redirect changes relative dependency directory: '+request.full_url)
+        return super().redirect_request(request,fp,code,message,headers,new_url)
+
+opener = urllib.request.build_opener(SameOriginRedirect())
+javascript_types = {
+    'application/ecmascript','application/javascript','application/x-ecmascript','application/x-javascript',
+    'text/ecmascript','text/javascript','text/javascript1.0','text/javascript1.1','text/javascript1.2',
+    'text/javascript1.3','text/javascript1.4','text/javascript1.5','text/jscript','text/livescript',
+    'text/x-ecmascript','text/x-javascript'
+}
+allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
+for path,asset in json.loads(sys.argv[2]).items():
+    with opener.open(sys.argv[1]+path,timeout=5) as response:
+        if path=='/' and urllib.parse.urlsplit(response.geturl()).path!='/':
+            raise RuntimeError('Frontend home redirect changes app route: '+response.geturl())
+        headers = response.headers.get_all('Content-Type') or []
+        media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
+        if media_type not in allowed_types[asset['kind']]:
+            raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
+        encodings = response.headers.get_all('Content-Encoding') or []
+        if any(value.strip().lower()!='identity' for value in encodings):
+            raise RuntimeError('Unsupported frontend Content-Encoding: '+path)
+        data = response.read(asset['size']+1)
+        if len(data)!=asset['size']:
+            raise RuntimeError('Served frontend size mismatch: '+path)
+        for header in response.headers.get_all('Content-Length') or []:
+            for value in header.split(','):
+                value = value.strip()
+                if not value.isdecimal() or int(value)!=len(data):
+                    raise RuntimeError('Served frontend Content-Length mismatch: '+path)
+        if hashlib.sha256(data).hexdigest()!=asset['sha256']:
+            raise RuntimeError('Served frontend content mismatch: '+path)
+"""
+    run(200, ["timeout", "--kill-after=2s", f"{FRONTEND_VERIFY_SECONDS}s", "python3", "-c", program, WEB_URL, json.dumps(expected)])
+
+
+def backup(stamp):
+    directory = Path("/root/.local/state/myworkspace/preview-backups")
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = directory / ("myworkspace-preview-" + stamp + ".sql.gz")
+    dump = run(202, ["mysqldump", "--defaults-extra-file=/root/.myworkspace.cnf", "--single-transaction", "--no-tablespaces", "--set-gtid-purged=OFF", "--column-statistics=0", "--hex-blob", "myworkspace_preview"])
+    target.write_bytes(gzip.compress(dump.encode()))
+    target.chmod(0o600)
+    key = run(200, ["python3", "-c", "from pathlib import Path;import os;p=Path('/var/lib/myworkspace-preview/icloud-master.key');fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW) if p.exists() else None;print(os.read(fd,33).hex() if fd is not None else '');fd is not None and os.close(fd)"]).strip()
+    if key:
+        value = bytes.fromhex(key)
+        if len(value) != 32:
+            raise RuntimeError("Invalid preview encryption key")
+        target.with_suffix(".key").write_bytes(value)
+        target.with_suffix(".key").chmod(0o600)
+    return target
+
+
+def replace(target, link, stamp):
+    temporary = link + "." + stamp
+    run(200, ["ln", "-s", target, temporary])
+    run(200, ["mv", "-Tf", temporary, link])
+
+
+def restore(previous_jar, previous_frontend, stamp):
+    failures = []
+    for target, path in ((previous_jar, JAR), (previous_frontend, FRONTEND)):
+        try:
+            replace(target, path, stamp + "-restore")
+        except Exception as error:
+            failures.append(f"{path}: {type(error).__name__}")
+    try:
+        run(200, ["systemctl", "restart", "myworkspace-preview"])
+    except Exception as error:
+        failures.append(f"backend restart: {type(error).__name__}")
+    for port in (8081, 8088):
+        try:
+            if not ready(port):
+                failures.append(f"port {port} readiness")
+        except Exception as error:
+            failures.append(f"port {port}: {type(error).__name__}")
+    return failures
+
+
+def deploy(root=None):
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with LOCK_PATH.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another preview deployment is already running") from None
+        _deploy(root)
+
+
+def _deploy(root=None):
+    root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
+    jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
+    dist = root / "FE/dist"
+    if not jar.is_file() or not (dist / "index.html").is_file():
+        raise ValueError("Build BE and FE before updating the preview")
+    expected_frontend = frontend_manifest(dist)
+    previous_jar = run(200, ["readlink", JAR]).strip()
+    previous_frontend = run(200, ["readlink", FRONTEND]).strip()
+    if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
+        raise ValueError("Preview release links are not configured")
+    for service in ("myworkspace-preview", "myworkspace-preview-web"):
+        run(200, ["systemctl", "is-active", "--quiet", service])
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    snapshot = backup(stamp)
+    release = "preview-" + commit[:12] + "-" + stamp
+    target = "/opt/myworkspace-preview/releases/" + release + ".jar"
+    frontend = "/var/www/myworkspace-preview/releases/" + release
+    subprocess.run(["pct", "push", "200", str(jar), target, "--perms", "0644"], capture_output=True, check=True)
+    if run(200, ["sha256sum", target]).split()[0] != hashlib.sha256(jar.read_bytes()).hexdigest():
+        raise RuntimeError("Uploaded JAR checksum mismatch")
+    run(200, ["install", "-d", "-m", "755", frontend])
+    for path in dist.rglob("*"):
+        destination = frontend + "/" + str(path.relative_to(dist))
+        if path.is_dir():
+            run(200, ["install", "-d", "-m", "755", destination])
+        else:
+            subprocess.run(["pct", "push", "200", str(path), destination, "--perms", "0644"], capture_output=True, check=True)
+            if run(200, ["sha256sum", destination]).split()[0] != hashlib.sha256(path.read_bytes()).hexdigest():
+                raise RuntimeError("Uploaded frontend checksum mismatch")
+    try:
+        replace(target, JAR, stamp)
+        run(200, ["systemctl", "restart", "myworkspace-preview"])
+        if not ready():
+            raise RuntimeError("Preview backend did not become ready")
+        replace(frontend, FRONTEND, stamp)
+        if not ready(8088):
+            raise RuntimeError("Preview web endpoint did not become ready")
+        verify_frontend(expected_frontend)
+    except BaseException as error:
+        failures = restore(previous_jar, previous_frontend, stamp)
+        if failures:
+            raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
+        raise
+    receipt = dict(commit=commit, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
+    print("Preview deployed", commit)
+    try:
+        private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
+    except Exception as error:
+        print(f"Warning: release {commit} is active; server deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+    try:
+        output = root / ".runtime/shortcuts-preview"
+        output.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (output / "deployment.json").write_text(json.dumps(receipt, indent=2))
+        (output / "deployment.json").chmod(0o600)
+    except Exception as error:
+        print(f"Warning: release {commit} is active; local deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    deploy()

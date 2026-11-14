@@ -1,0 +1,418 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { Bookmark, Check, FolderPlus, GripVertical, Plus } from "lucide-react";
+import { useRef, useState } from "react";
+import { ApiError, api } from "@/api";
+import { ShortcutBoard } from "@/components/ShortcutBoard";
+import { ShortcutDialog, type ShortcutDialogTarget } from "@/components/ShortcutDialogs";
+import { Button } from "@/components/ui/button";
+import { reconcileShortcutBoard, recordShortcutMoves } from "@/lib/shortcuts";
+import type { ShortcutBoard as Board } from "@/types/domain";
+
+export const Route = createFileRoute("/shortcuts")({
+  head: ({ match }) => ({
+    meta: [
+      { title: `바로가기 · ${match.context.siteName}` },
+      { name: "description", content: "분류별로 모아 둔 사이트 바로가기" },
+    ],
+  }),
+  component: ShortcutsPage,
+});
+
+const queryKey = ["shortcuts"];
+type CreateSubmission = { name: string; url?: string; groupSelectionVersion?: number };
+
+const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+
+function ShortcutsPage() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey,
+    queryFn: () => api.shortcuts.get(),
+    refetchOnWindowFocus: false,
+  });
+  const dialogTrigger = useRef<HTMLButtonElement | null>(null);
+  const fallbackFocus = useRef<HTMLButtonElement | null>(null);
+  const editingBase = useRef<Board | null>(null);
+  const deletedLinkIds = useRef(new Set<string>());
+  const deletedGroupIds = useRef(new Set<string>());
+  const movedLinkOrigins = useRef(new Map<string, string>());
+  const automaticLinkGroups = useRef(new Map<string, string>());
+  const [conflict, setConflict] = useState(false);
+  const [draft, setDraft] = useState<Board | null>(null);
+  const attemptedCreate = useRef<(CreateSubmission & { board: Board; uncertain: boolean }) | null>(
+    null,
+  );
+  const [dialog, setDialog] = useState<(ShortcutDialogTarget & { operationId: string }) | null>(
+    null,
+  );
+  const openDialog = (target: ShortcutDialogTarget) => {
+    attemptedCreate.current = null;
+    setDialog({ ...target, operationId: newId() });
+  };
+  const mutation = useMutation({
+    mutationFn: (board: Board) => api.shortcuts.save(board),
+    onSuccess: (saved) => queryClient.setQueryData(queryKey, saved),
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "CONFLICT") {
+        if (editingBase.current) setConflict(true);
+        else void queryClient.invalidateQueries({ queryKey });
+      }
+    },
+  });
+  const board = draft ?? query.data;
+  const editing = draft !== null;
+  const busy = mutation.isPending || query.isFetching;
+  const change = async (next: Board, attempt?: CreateSubmission) => {
+    if (draft) {
+      recordShortcutMoves(draft, next, movedLinkOrigins.current);
+      setDraft(next);
+      return;
+    }
+    const previous = attemptedCreate.current;
+    if (attempt) attemptedCreate.current = { ...attempt, board: next, uncertain: false };
+    try {
+      await mutation.mutateAsync(next);
+    } catch (error) {
+      // Rejected writes cannot replace the last potentially persisted submission.
+      if (attempt) {
+        if (error instanceof ApiError && error.code !== "NETWORK")
+          attemptedCreate.current = previous;
+        else attemptedCreate.current!.uncertain = true;
+      }
+      throw error;
+    }
+  };
+
+  const confirmCreate = async (current: Board): Promise<Board> => {
+    const pending = attemptedCreate.current;
+    if (!pending?.uncertain) return current;
+    let confirmed: Board;
+    try {
+      // Reuse the exact uncertain write before accepting another payload at its revision.
+      confirmed = await mutation.mutateAsync(pending.board);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "CONFLICT") {
+        if (error instanceof ApiError && error.code !== "NETWORK") pending.uncertain = false;
+        throw error;
+      }
+      // Reuse the conflict-triggered refresh if it has already completed.
+      confirmed = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: () => api.shortcuts.get(),
+        staleTime: Infinity,
+      });
+    }
+    pending.uncertain = false;
+    return confirmed;
+  };
+
+  return (
+    <div
+      className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12"
+      onClickCapture={(event) => {
+        if (!dialog && event.target instanceof Element)
+          dialogTrigger.current = event.target.closest("button");
+      }}
+    >
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-3xl font-bold">바로가기</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            className="h-10 px-3 sm:px-4"
+            variant="outline"
+            disabled={!board || busy}
+            ref={fallbackFocus}
+            onClick={() => openDialog({ kind: "group" })}
+          >
+            <FolderPlus aria-hidden /> 분류 추가
+          </Button>
+          {editing ? (
+            <>
+              <Button
+                className="h-10 px-3 sm:px-4"
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  setDraft(null);
+                  editingBase.current = null;
+                  deletedLinkIds.current.clear();
+                  deletedGroupIds.current.clear();
+                  movedLinkOrigins.current.clear();
+                  automaticLinkGroups.current.clear();
+                  setConflict(false);
+                  mutation.reset();
+                }}
+              >
+                취소
+              </Button>
+              <Button
+                className="h-10 px-3 sm:px-4"
+                disabled={busy}
+                onClick={async () => {
+                  if (!draft) return;
+                  try {
+                    if (conflict && editingBase.current) {
+                      const latest = await queryClient.fetchQuery({
+                        queryKey,
+                        queryFn: () => api.shortcuts.get(),
+                        staleTime: 0,
+                      });
+                      setDraft(
+                        reconcileShortcutBoard(
+                          editingBase.current,
+                          draft,
+                          latest,
+                          deletedLinkIds.current,
+                          automaticLinkGroups.current,
+                          deletedGroupIds.current,
+                          movedLinkOrigins.current,
+                        ),
+                      );
+                      editingBase.current = structuredClone(latest);
+                      setConflict(false);
+                      mutation.reset();
+                      return;
+                    }
+                    await mutation.mutateAsync(draft);
+                    setDraft(null);
+                    editingBase.current = null;
+                    deletedLinkIds.current.clear();
+                    deletedGroupIds.current.clear();
+                    movedLinkOrigins.current.clear();
+                    automaticLinkGroups.current.clear();
+                  } catch {
+                    /* Keep the draft for retry. */
+                  }
+                }}
+              >
+                <Check aria-hidden />
+                {mutation.isPending ? "저장 중…" : conflict ? "최신 변경과 합치기" : "저장"}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                className="h-10 px-3 sm:px-4"
+                variant="outline"
+                disabled={!board || busy}
+                onClick={() => {
+                  mutation.reset();
+                  editingBase.current = structuredClone(board!);
+                  deletedLinkIds.current.clear();
+                  deletedGroupIds.current.clear();
+                  movedLinkOrigins.current.clear();
+                  automaticLinkGroups.current.clear();
+                  setConflict(false);
+                  setDraft(structuredClone(board!));
+                }}
+              >
+                <GripVertical aria-hidden /> 정리
+              </Button>
+              <Button
+                className="h-10 px-3 sm:px-4"
+                disabled={!board || busy}
+                onClick={() => openDialog({ kind: "link" })}
+              >
+                <Plus aria-hidden /> 추가
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+      {editing && (
+        <p className="mb-5 rounded-lg bg-secondary px-4 py-3 text-sm text-secondary-foreground">
+          이동 손잡이를 드래그해 순서와 분류를 바꾼 뒤 저장하세요. 키보드는 손잡이에서 스페이스 키와
+          방향키를 사용합니다.
+        </p>
+      )}
+      {query.isLoading && (
+        <p role="status" className="py-8 text-muted-foreground">
+          바로가기를 불러오는 중…
+        </p>
+      )}
+      {query.error && (
+        <div
+          role="alert"
+          className="mb-5 flex flex-wrap items-center gap-3 text-sm text-destructive"
+        >
+          바로가기를 불러오지 못했습니다.
+          <Button variant="outline" onClick={() => void query.refetch()}>
+            다시 시도
+          </Button>
+        </div>
+      )}
+      {mutation.error && !dialog && (
+        <p role="alert" className="mb-5 text-sm text-destructive">
+          {conflict
+            ? "다른 곳에서 변경됐습니다. 최신 변경과 합친 뒤 확인하고 저장하세요. 같은 항목의 같은 필드는 현재 초안을 우선합니다."
+            : mutation.error.message}
+        </p>
+      )}
+      {board && (
+        <>
+          {board.groups.length === 0 && (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-5 text-center">
+              <Bookmark aria-hidden className="mb-1 size-8 text-primary/70" />
+              <p className="font-medium">자주 찾는 사이트를 모아 보세요.</p>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => openDialog({ kind: "link" })}
+              >
+                <Plus aria-hidden /> 바로가기 추가
+              </Button>
+            </div>
+          )}
+          <ShortcutBoard
+            board={board}
+            editing={editing}
+            busy={busy}
+            onChange={(next, deletedLinkId) => {
+              if (deletedLinkId) deletedLinkIds.current.add(deletedLinkId);
+              void change(next).catch(() => {});
+            }}
+            onEditLink={(link, groupId) => openDialog({ kind: "link", link, groupId })}
+            onEditGroup={(group) => openDialog({ kind: "group", group })}
+            onDeleteGroup={(group) => openDialog({ kind: "delete-group", group })}
+          />
+          {dialog && (
+            <ShortcutDialog
+              key={dialog.operationId}
+              onRestoreFocus={() => {
+                const trigger = dialogTrigger.current;
+                if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+                else fallbackFocus.current?.focus();
+              }}
+              target={dialog}
+              groups={board.groups}
+              currentGroupId={
+                dialog.kind === "link"
+                  ? board.groups.find((group) =>
+                      group.links.some(
+                        (link) => link.id === (dialog.link?.id ?? dialog.operationId),
+                      ),
+                    )?.id
+                  : undefined
+              }
+              baselineGroupSelectionVersion={
+                dialog.kind === "link" && dialog.link
+                  ? 0
+                  : attemptedCreate.current?.groupSelectionVersion
+              }
+              onClose={() => {
+                setDialog(null);
+                mutation.reset();
+              }}
+              onSaveLink={async ({
+                name,
+                url,
+                groupId,
+                groupSelectionVersion,
+                automaticGroupSelection,
+              }) => {
+                const current =
+                  dialog.kind === "link" && !dialog.link && !editing
+                    ? await confirmCreate(board)
+                    : board;
+                const submitted = { name, url, groupSelectionVersion };
+                const id =
+                  dialog.kind === "link"
+                    ? (dialog.link?.id ?? dialog.operationId)
+                    : dialog.operationId;
+                let group = groupId || current.groups[0]?.id || `group-${dialog.operationId}`;
+                const existingGroup = current.groups.find((item) =>
+                  item.links.some((link) => link.id === id),
+                );
+                const existingLink = existingGroup?.links.find((link) => link.id === id);
+                if (dialog.kind === "link" && !dialog.link) {
+                  const attempted = attemptedCreate.current;
+                  // Preserve server edits to fields unchanged since the last possible save.
+                  if (attempted && existingLink && existingGroup) {
+                    if (name === attempted.name) name = existingLink.name;
+                    if (url === attempted.url) url = existingLink.url;
+                    if (
+                      automaticGroupSelection ||
+                      groupSelectionVersion === attempted.groupSelectionVersion
+                    )
+                      group = existingGroup.id;
+                  }
+                }
+                if (dialog.kind === "link" && dialog.link && existingLink && existingGroup) {
+                  if (name === dialog.link.name) name = existingLink.name;
+                  if (url === dialog.link.url) url = existingLink.url;
+                  if (automaticGroupSelection || groupSelectionVersion === 0)
+                    group = existingGroup.id;
+                }
+                if (
+                  existingGroup?.id === group &&
+                  existingLink?.name === name &&
+                  existingLink.url === url
+                )
+                  return;
+                if (current.groups.length && !current.groups.some((item) => item.id === group))
+                  throw new Error("분류가 변경됐습니다. 분류를 다시 선택하세요.");
+                const groups = current.groups.length
+                  ? current.groups
+                  : [{ id: group, name: "미분류", collapsed: false, links: [] }];
+                await change(
+                  {
+                    ...current,
+                    groups: groups.map((item) => {
+                      if (item.id !== group)
+                        return { ...item, links: item.links.filter((link) => link.id !== id) };
+                      const exists = item.links.some((link) => link.id === id);
+                      const links = exists
+                        ? item.links.map((link) => (link.id === id ? { id, name, url } : link))
+                        : [...item.links, { id, name, url }];
+                      return { ...item, links };
+                    }),
+                  },
+                  dialog.kind === "link" && !dialog.link ? submitted : undefined,
+                );
+              }}
+              onSaveGroup={async (name) => {
+                const current =
+                  dialog.kind === "group" && !dialog.group && !editing
+                    ? await confirmCreate(board)
+                    : board;
+                const submitted = { name };
+                const selected =
+                  dialog.kind === "group"
+                    ? (dialog.group ??
+                      current.groups.find((group) => group.id === dialog.operationId))
+                    : undefined;
+                if (dialog.kind === "group" && !dialog.group) {
+                  const attempted = attemptedCreate.current;
+                  if (attempted && selected && name === attempted.name) name = selected.name;
+                }
+                if (selected?.name === name) return;
+                const groups = selected
+                  ? current.groups.map((group) =>
+                      group.id === selected.id ? { ...group, name } : group,
+                    )
+                  : [
+                      ...current.groups,
+                      { id: dialog.operationId, name, collapsed: false, links: [] },
+                    ];
+                await change(
+                  { ...current, groups },
+                  dialog.kind === "group" && !dialog.group ? submitted : undefined,
+                );
+              }}
+              onDeleteGroup={async () => {
+                if (dialog.kind === "delete-group") {
+                  deletedGroupIds.current.add(dialog.group.id);
+                  await change({
+                    ...board,
+                    groups: board.groups.filter((group) => group.id !== dialog.group.id),
+                  });
+                }
+              }}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
