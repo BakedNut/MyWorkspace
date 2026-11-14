@@ -249,7 +249,7 @@ class FrontendVerificationTest(unittest.TestCase):
             self.assertEqual(manifest["/entry"]["size"], (dist / "entry").stat().st_size)
 
     @contextlib.contextmanager
-    def served_frontend(self, redirects=None):
+    def served_frontend(self, redirects=None, encodings=None):
         bodies = {"/": b'<script src="/assets/app.js"></script>',
                   "/assets/app.js": b'console.log("ready")',
                   "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
@@ -268,6 +268,8 @@ class FrontendVerificationTest(unittest.TestCase):
                     values = [values]
                 for value in values or []:
                     self.send_header("Content-Type", value)
+                for value in (encodings or {}).get(self.path, []):
+                    self.send_header("Content-Encoding", value)
                 self.end_headers()
                 self.wfile.write(content or b"missing")
             def log_message(self, *args):
@@ -341,6 +343,19 @@ class FrontendVerificationTest(unittest.TestCase):
                     server.shutdown()
                     server.server_close()
                     thread.join(timeout=2)
+
+    def test_only_unencoded_frontend_responses_are_accepted(self):
+        encodings = {}
+        with self.served_frontend(encodings=encodings) as (bodies, media, expected):
+            for path in expected:
+                for values in ([], ["identity"], ["IDENTITY"]):
+                    encodings[path] = values
+                    preview.verify_frontend(expected)
+                for values in (["gzip"], ["br"], ["deflate"], ["identity", "gzip"], ["gzip", "identity"], ["identity, gzip"]):
+                    encodings[path] = values
+                    with self.subTest(path=path, encoding=values), self.assertRaises(subprocess.CalledProcessError):
+                        preview.verify_frontend(expected)
+                encodings[path] = []
 
     def test_home_redirect_must_end_at_root_route(self):
         redirects = {}

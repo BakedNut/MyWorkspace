@@ -104,6 +104,9 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
+        encodings = response.headers.get_all('Content-Encoding') or []
+        if any(value.strip().lower()!='identity' for value in encodings):
+            raise RuntimeError('Unsupported frontend Content-Encoding: '+path)
         data = response.read(asset['size']+1)
         if len(data)!=asset['size']:
             raise RuntimeError('Served frontend size mismatch: '+path)
