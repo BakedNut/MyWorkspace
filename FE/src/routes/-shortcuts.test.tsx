@@ -1144,3 +1144,17 @@ it.each([false, true])(
     );
   },
 );
+
+it.each(["https:example.com", "https:/example.com", "https://example.com/path"])(
+  "기존 URL은 파싱한 절대 주소로 연다 %s",
+  async (url) => {
+    const board = structuredClone(initial);
+    board.groups[0]!.links = [{ id: "legacy", name: "기존 주소", url }];
+    vi.mocked(api.shortcuts.get).mockResolvedValue(board);
+    setup();
+    expect(await screen.findByRole("link", { name: "기존 주소 새 탭에서 열기" })).toHaveAttribute(
+      "href",
+      new URL(url).href,
+    );
+  },
+);

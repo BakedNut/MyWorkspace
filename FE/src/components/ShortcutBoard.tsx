@@ -380,7 +380,7 @@ function LinkCard({
         </>
       ) : site ? (
         <a
-          href={link.url}
+          href={site.href}
           target="_blank"
           rel="noopener noreferrer"
           className="flex min-w-0 items-center gap-3 rounded-xl p-4"
