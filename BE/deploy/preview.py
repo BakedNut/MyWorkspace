@@ -69,7 +69,7 @@ def frontend_manifest(dist):
 
 
 def verify_frontend(expected):
-    program = """import hashlib,json,sys,urllib.request,urllib.parse
+    program = """import email.message,hashlib,json,sys,urllib.request,urllib.parse
 
 def origin(url):
     parsed = urllib.parse.urlsplit(url)
@@ -96,6 +96,7 @@ javascript_types = {
     'text/x-ecmascript','text/x-javascript'
 }
 allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
+utf8_labels = {'unicode-1-1-utf-8','unicode11utf8','unicode20utf8','utf-8','utf8','x-unicode20utf8'}
 for path,asset in json.loads(sys.argv[2]).items():
     with opener.open(sys.argv[1]+path,timeout=5) as response:
         if path=='/' and urllib.parse.urlsplit(response.geturl()).path!='/':
@@ -104,6 +105,13 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
+        if asset['kind']=='html':
+            for header in headers:
+                parsed = email.message.Message()
+                parsed['Content-Type'] = header
+                for name,value in (parsed.get_params() or [])[1:]:
+                    if name.lower()=='charset' and (not isinstance(value,str) or value.strip().lower() not in utf8_labels):
+                        raise RuntimeError('HTML charset does not match UTF-8 build: '+path)
         encodings = response.headers.get_all('Content-Encoding') or []
         if any(value.strip().lower()!='identity' for value in encodings):
             raise RuntimeError('Unsupported frontend Content-Encoding: '+path)
