@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 import time
+import zipfile
 from initialize import run, private_file
 
 
@@ -129,6 +130,26 @@ for path,asset in json.loads(sys.argv[2]).items():
     run(200, ["timeout", "--kill-after=2s", f"{FRONTEND_VERIFY_SECONDS}s", "python3", "-c", program, WEB_URL, json.dumps(expected)])
 
 
+def build_metadata(root, jar, dist):
+    try:
+        with zipfile.ZipFile(jar) as archive:
+            properties = dict(line.split("=", 1) for line in
+                              archive.read("BOOT-INF/classes/git.properties").decode().splitlines()
+                              if line.startswith("git."))
+        backend_commit = properties["git.commit.id.full"]
+        backend_dirty = properties["git.dirty"]
+        frontend = json.loads((dist / "build-info.json").read_text())
+        if backend_dirty not in ("true", "false") or type(frontend["dirty"]) is not bool:
+            raise ValueError("Invalid build flags")
+        frontend_commit = frontend["commit"]
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as error:
+        raise ValueError("Build metadata is missing or invalid; rebuild BE and FE") from error
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    if backend_commit != commit or frontend_commit != commit:
+        raise ValueError("Build commit does not match current checkout; rebuild BE and FE")
+    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"])
+
+
 def backup(stamp):
     directory = Path("/root/.local/state/myworkspace/preview-backups")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -189,13 +210,14 @@ def _deploy(root=None):
     if not jar.is_file() or not (dist / "index.html").is_file():
         raise ValueError("Build BE and FE before updating the preview")
     expected_frontend = frontend_manifest(dist)
+    build = build_metadata(root, jar, dist)
     previous_jar = run(200, ["readlink", JAR]).strip()
     previous_frontend = run(200, ["readlink", FRONTEND]).strip()
     if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
         raise ValueError("Preview release links are not configured")
     for service in ("myworkspace-preview", "myworkspace-preview-web"):
         run(200, ["systemctl", "is-active", "--quiet", service])
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    commit = build["commit"]
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     snapshot = backup(stamp)
     release = "preview-" + commit[:12] + "-" + stamp
@@ -227,8 +249,8 @@ def _deploy(root=None):
         if failures:
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise
-    receipt = dict(commit=commit, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
-    print("Preview deployed", commit)
+    receipt = dict(**build, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
+    print("Preview deployed", commit, "dirty=" + str(build["backendDirty"] or build["frontendDirty"]).lower())
     try:
         private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
     except Exception as error:

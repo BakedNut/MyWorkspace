@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import io
+import json
 import http.server
 import threading
 import time
@@ -9,6 +10,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 import preview
 
@@ -20,10 +22,12 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.root = Path(directory.name)
         jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
         jar.parent.mkdir(parents=True)
-        jar.write_bytes(b"jar")
+        with zipfile.ZipFile(jar, "w") as archive:
+            archive.writestr("BOOT-INF/classes/git.properties", "git.commit.id.full=commit\ngit.dirty=false\n")
         dist = self.root / "FE/dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("preview")
+        (dist / "build-info.json").write_text('{"commit":"commit","dirty":false}')
         self.mock("LOCK_PATH", new=self.root / "preview-deploy.lock")
         self.old_jar = "/opt/myworkspace-preview/releases/old.jar"
         self.old_frontend = "/var/www/myworkspace-preview/releases/old"
@@ -46,7 +50,8 @@ class PreviewDeploymentTest(unittest.TestCase):
         if args == ["readlink", preview.FRONTEND]:
             return self.old_frontend
         if args[0] == "sha256sum":
-            value = b"jar" if args[1].endswith(".jar") else b"preview"
+            source = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar" if args[1].endswith(".jar") else self.root / "FE/dist" / Path(args[1]).name
+            value = source.read_bytes()
             return hashlib.sha256(value).hexdigest() + " file"
         return ""
 
@@ -208,6 +213,37 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.run.side_effect = self.server_run
         preview.deploy(self.root)
         self.private.assert_called_once()
+
+    def test_stale_build_commit_aborts_before_server_operations(self):
+        for component in ("backend", "frontend"):
+            with self.subTest(component=component):
+                jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
+                with zipfile.ZipFile(jar, "w") as archive:
+                    commit = "old" if component == "backend" else "commit"
+                    archive.writestr("BOOT-INF/classes/git.properties", f"git.commit.id.full={commit}\ngit.dirty=false\n")
+                commit = "old" if component == "frontend" else "commit"
+                (self.root / "FE/dist/build-info.json").write_text('{"commit":"' + commit + '","dirty":false}')
+                with self.assertRaisesRegex(ValueError, "commit"):
+                    preview.deploy(self.root)
+                self.run.assert_not_called()
+                self.backup.assert_not_called()
+                self.private.assert_not_called()
+
+    def test_missing_build_metadata_aborts_before_server_operations(self):
+        (self.root / "FE/dist/build-info.json").unlink()
+        with self.assertRaises(ValueError):
+            preview.deploy(self.root)
+        self.run.assert_not_called()
+        self.backup.assert_not_called()
+        self.private.assert_not_called()
+
+    def test_deployment_receipt_preserves_dirty_build_flags(self):
+        (self.root / "FE/dist/build-info.json").write_text('{"commit":"commit","dirty":true}')
+        preview.deploy(self.root)
+        receipt = json.loads(self.private.call_args.args[2])
+        self.assertEqual(receipt["commit"], "commit")
+        self.assertFalse(receipt["backendDirty"])
+        self.assertTrue(receipt["frontendDirty"])
 
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
