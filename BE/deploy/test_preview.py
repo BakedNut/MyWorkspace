@@ -419,6 +419,16 @@ class FrontendVerificationTest(unittest.TestCase):
                 with self.subTest(content_type=value), self.assertRaises(subprocess.CalledProcessError):
                     preview.verify_frontend(expected)
 
+    def test_css_charset_must_match_utf8_build(self):
+        with self.served_frontend() as (bodies, media, expected):
+            for value in ("text/css", 'text/css; charset="UTF-8"', "text/css; charset=utf8"):
+                media["/assets/app.css"] = value
+                preview.verify_frontend(expected)
+            for value in ("text/css; charset=utf-16le", "text/css; charset=windows-1252", "text/css; charset=unknown", "text/css; charset=utf-8; charset=utf-16le", ["text/css; charset=utf-8", "text/css; charset=utf-16le"]):
+                media["/assets/app.css"] = value
+                with self.subTest(content_type=value), self.assertRaises(subprocess.CalledProcessError):
+                    preview.verify_frontend(expected)
+
     def test_home_redirect_must_end_at_root_route(self):
         redirects = {}
         with self.served_frontend(redirects) as (bodies, media, expected):

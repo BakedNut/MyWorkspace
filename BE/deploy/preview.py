@@ -106,13 +106,13 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
-        if asset['kind']=='html':
+        if asset['kind'] in ('html','css'):
             for header in headers:
                 parsed = email.message.Message()
                 parsed['Content-Type'] = header
                 for name,value in (parsed.get_params() or [])[1:]:
                     if name.lower()=='charset' and (not isinstance(value,str) or value.strip().lower() not in utf8_labels):
-                        raise RuntimeError('HTML charset does not match UTF-8 build: '+path)
+                        raise RuntimeError(asset['kind'].upper()+' charset does not match UTF-8 build: '+path)
         encodings = response.headers.get_all('Content-Encoding') or []
         if any(value.strip().lower()!='identity' for value in encodings):
             raise RuntimeError('Unsupported frontend Content-Encoding: '+path)
