@@ -1212,3 +1212,58 @@ it("지원 한도 200개 자동 배치를 반복 전체 정렬 없이 병합한�
   expect(placements.size).toBe(200);
   for (const placement of placements.values()) expect(placement.order).toEqual(expected);
 });
+
+it.each(["retained", "missing", "server-move", "deleted"])(
+  "후속 충돌에서 이전 자동 배치 분류를 처리한다 %s",
+  (mode) => {
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { id: "b", name: "B", collapsed: false, links: [x] },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const draft = { ...structuredClone(base), groups: structuredClone(base.groups.slice(0, 2)) };
+    const latest = moveShortcut(base, "x", "c");
+    latest.revision++;
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedGroups = new Set(["c"]);
+    const first = reconcileShortcutBoard(base, draft, latest, new Set(), placements, deletedGroups);
+    expect(first.groups.find((group) => group.id === "b")!.links).toEqual([x]);
+    const next = structuredClone(latest);
+    next.revision++;
+    next.groups[0]!.name = "서버 A";
+    if (mode === "missing") next.groups = next.groups.filter((group) => group.id !== "b");
+    if (mode === "server-move" || mode === "deleted") next.groups[2]!.links = [];
+    if (mode === "server-move") next.groups[0]!.links = [x];
+    const second = reconcileShortcutBoard(
+      latest,
+      first,
+      next,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    const expected = mode === "retained" ? "b" : mode === "deleted" ? undefined : "a";
+    expect(second.groups.find((group) => group.links.some((link) => link.id === "x"))?.id).toBe(
+      expected,
+    );
+    const updated = structuredClone(next);
+    updated.revision++;
+    updated.groups[0]!.name = "다시 서버 A";
+    const third = reconcileShortcutBoard(
+      next,
+      second,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(third.groups.find((group) => group.links.some((link) => link.id === "x"))?.id).toBe(
+      expected,
+    );
+    expect(third.groups.some((group) => group.id === "c")).toBe(false);
+  },
+);

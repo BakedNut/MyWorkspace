@@ -1441,3 +1441,47 @@ it.each([false, true])(
     expect(server.groups[0]!.name).toBe(name);
   },
 );
+
+it("반복 충돌에서 이미 자동 배치한 분류를 보존하고 저장한다", async () => {
+  const x = { id: "x", name: "X", url: "https://example.com/" };
+  let persisted: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      { id: "a", name: "A", collapsed: false, links: [] },
+      { id: "b", name: "B", collapsed: false, links: [x] },
+      { id: "c", name: "C", collapsed: false, links: [] },
+    ],
+  };
+  vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+  let calls = 0;
+  vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+    calls++;
+    if (calls === 1) {
+      persisted.groups[1]!.links = [];
+      persisted.groups[2]!.links = [x];
+    } else if (calls === 2) persisted.groups[0]!.name = "서버 이름 변경";
+    else {
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      return persisted;
+    }
+    persisted.revision++;
+    throw new ApiError("다른 탭의 변경", "CONFLICT");
+  });
+  setup();
+  await screen.findByRole("link", { name: "X 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "C 분류 삭제" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  for (let round = 0; round < 2; round++) {
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "최신 변경과 합치기" }));
+    await screen.findByRole("button", { name: "저장" });
+    const section = document.querySelector('[data-group-id="b"]') as HTMLElement;
+    expect(within(section).getByRole("button", { name: "X 바로가기 수정" })).toBeInTheDocument();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "정리" });
+  expect(persisted.groups.find((group) => group.id === "b")!.links).toEqual([x]);
+  expect(persisted.groups.find((group) => group.id === "a")!.name).toBe("서버 이름 변경");
+});

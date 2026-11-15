@@ -302,6 +302,7 @@ export function reconcileShortcutBoard(
     let destination =
       groups.find((group) => group.id === saved?.groupId) ??
       groups.find((group) => group.id === original?.id) ??
+      groups.find((group) => group.id === previousPlacements.get(link.id)?.groupId) ??
       groups[0];
     if (!destination) {
       const source = [...mergedGroups, ...latest.groups, ...draft.groups, ...base.groups].find(
