@@ -190,17 +190,43 @@ function mergeShortcutItems<T extends { id: string }>(
   ).map((id) => merged.get(id)!);
 }
 
+function shortcutPositionChanged(
+  before: { id: string }[],
+  after: { id: string }[],
+  id: string,
+): boolean {
+  const previousIndex = before.findIndex((link) => link.id === id);
+  const currentIndex = after.findIndex((link) => link.id === id);
+  return (
+    previousIndex >= 0 &&
+    currentIndex >= 0 &&
+    before.some((link, index) => {
+      const nextIndex = after.findIndex((item) => item.id === link.id);
+      const wasBefore = index < previousIndex;
+      const isBefore = nextIndex < currentIndex;
+      return nextIndex >= 0 && wasBefore !== isBefore;
+    })
+  );
+}
+
 export function recordShortcutMoves(
   before: ShortcutBoard,
   after: ShortcutBoard,
   movedLinkOrigins: Map<string, string>,
+  reorderedLinkGroups: Map<string, string> = new Map(),
 ): void {
   for (const group of after.groups) {
     for (const link of group.links) {
       const previous = before.groups.find((item) =>
         item.links.some((entry) => entry.id === link.id),
       );
-      if (!previous || previous.id === group.id) continue;
+      if (!previous) continue;
+      if (previous.id === group.id) {
+        if (shortcutPositionChanged(previous.links, group.links, link.id))
+          reorderedLinkGroups.set(link.id, group.id);
+        continue;
+      }
+      reorderedLinkGroups.delete(link.id);
       const origin = movedLinkOrigins.get(link.id) ?? previous.id;
       if (group.id === origin) movedLinkOrigins.delete(link.id);
       else movedLinkOrigins.set(link.id, origin);
@@ -216,6 +242,7 @@ export function reconcileShortcutBoard(
   automaticLinkGroups: Map<string, string> = new Map(),
   deletedGroupIds: ReadonlySet<string> = new Set(),
   movedLinkOrigins: Map<string, string> = new Map(),
+  reorderedLinkGroups: Map<string, string> = new Map(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
@@ -288,13 +315,25 @@ export function reconcileShortcutBoard(
     )
       movedLinkOrigins.delete(id);
   }
+  for (const [id, groupId] of reorderedLinkGroups) {
+    const saved = latest.groups.find((group) => group.links.some((link) => link.id === id));
+    const local = draft.groups.find((group) => group.id === groupId);
+    if (
+      !mergedLinks.some((link) => link.id === id && link.groupId === groupId) ||
+      (saved?.id === groupId && local && !shortcutPositionChanged(saved.links, local.links, id))
+    )
+      reorderedLinkGroups.delete(id);
+  }
   return {
     revision: latest.revision,
     groups: groups.map((group) => {
       const members = mergedLinks.filter((link) => link.groupId === group.id);
       const saved = latest.groups.find((item) => item.id === group.id)?.links ?? [];
       const local = (draft.groups.find((item) => item.id === group.id)?.links ?? []).filter(
-        (link) => !automaticLinkGroups.has(link.id) || saved.some((item) => item.id === link.id),
+        (link) =>
+          !automaticLinkGroups.has(link.id) ||
+          saved.some((item) => item.id === link.id) ||
+          reorderedLinkGroups.get(link.id) === group.id,
       );
       const order = mergeShortcutOrder(
         (base.groups.find((item) => item.id === group.id)?.links ?? []).map((link) => link.id),
@@ -303,10 +342,12 @@ export function reconcileShortcutBoard(
         members.map((link) => link.id),
         new Set(
           local
-            .filter((link) =>
-              comparisonLinks.some(
-                (before) => before.id === link.id && before.groupId !== group.id,
-              ),
+            .filter(
+              (link) =>
+                reorderedLinkGroups.get(link.id) === group.id ||
+                comparisonLinks.some(
+                  (before) => before.id === link.id && before.groupId !== group.id,
+                ),
             )
             .map((link) => link.id),
         ),

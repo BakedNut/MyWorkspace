@@ -815,3 +815,125 @@ it("이전 자동 배치 위치는 후속 충돌에서도 서버 순서를 따�
   const result = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
   expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["x", "one", "two"]);
 });
+
+it.each(["front", "middle", "unrelated", "remote-move", "remote-delete"])(
+  "자동 배치 후 직접 정렬한 위치를 반복 충돌에서 처리한다 %s",
+  (mode) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links = [x];
+    const placements = new Map<string, string>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const draft = moveShortcut(
+      restored,
+      mode === "unrelated" ? "two" : "x",
+      "b",
+      mode === "middle" ? "two" : "one",
+    );
+    recordShortcutMoves(restored, draft, origins, reordered);
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[1]!.links[1]!.name = "서버 수정";
+    if (mode === "remote-move") updated.groups[2]!.links = [x];
+    if (mode.startsWith("remote-")) updated.groups[0]!.links = [];
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const expected =
+      mode === "middle"
+        ? ["one", "x", "two"]
+        : mode === "unrelated"
+          ? ["two", "one", "x"]
+          : mode.startsWith("remote-")
+            ? ["one", "two"]
+            : ["x", "one", "two"];
+    expect(merged.groups.find((group) => group.id === "b")!.links.map((link) => link.id)).toEqual(
+      expected,
+    );
+    expect(
+      merged.groups.find((group) => group.id === "b")!.links.find((link) => link.id === "two")!
+        .name,
+    ).toBe("서버 수정");
+    expect(merged.groups.find((group) => group.id === "c")!.links).toEqual(
+      mode === "remote-move" ? [x] : [],
+    );
+    const third = structuredClone(updated);
+    third.revision++;
+    third.groups[1]!.links[1]!.name = "다시 서버 수정";
+    const final = reconcileShortcutBoard(
+      updated,
+      merged,
+      third,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(final.groups.find((group) => group.id === "b")!.links.map((link) => link.id)).toEqual(
+      expected,
+    );
+    if (mode.startsWith("remote-")) expect(reordered.has("x")).toBe(false);
+  },
+);
+
+it("서버가 직접 정렬 위치를 수용하면 이전 기록으로 새 서버 순서를 덮어쓰지 않는다", () => {
+  const base = structuredClone(board);
+  const reordered = new Map<string, string>();
+  const origins = new Map<string, string>();
+  const draft = moveShortcut(base, "two", "a", "one");
+  recordShortcutMoves(base, draft, origins, reordered);
+  expect(reordered.size).toBe(2);
+  const saved = { ...structuredClone(draft), revision: base.revision + 1 };
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    saved,
+    new Set(),
+    new Map(),
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(reordered.size).toBe(0);
+  const updated = { ...structuredClone(base), revision: saved.revision + 1 };
+  const final = reconcileShortcutBoard(
+    saved,
+    merged,
+    updated,
+    new Set(),
+    new Map(),
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(final.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two"]);
+});

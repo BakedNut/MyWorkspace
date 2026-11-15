@@ -38,6 +38,7 @@ function ShortcutsPage() {
   const deletedGroupIds = useRef(new Set<string>());
   const movedLinkOrigins = useRef(new Map<string, string>());
   const automaticLinkGroups = useRef(new Map<string, string>());
+  const reorderedLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [requiresRecreation, setRequiresRecreation] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
@@ -67,7 +68,7 @@ function ShortcutsPage() {
   const busy = mutation.isPending || query.isFetching;
   const change = async (next: Board, attempt?: CreateSubmission) => {
     if (draft) {
-      recordShortcutMoves(draft, next, movedLinkOrigins.current);
+      recordShortcutMoves(draft, next, movedLinkOrigins.current, reorderedLinkGroups.current);
       setDraft(next);
       return;
     }
@@ -157,6 +158,7 @@ function ShortcutsPage() {
                   deletedGroupIds.current.clear();
                   movedLinkOrigins.current.clear();
                   automaticLinkGroups.current.clear();
+                  reorderedLinkGroups.current.clear();
                   setConflict(false);
                   mutation.reset();
                 }}
@@ -184,6 +186,7 @@ function ShortcutsPage() {
                           automaticLinkGroups.current,
                           deletedGroupIds.current,
                           movedLinkOrigins.current,
+                          reorderedLinkGroups.current,
                         ),
                       );
                       editingBase.current = structuredClone(latest);
@@ -198,6 +201,7 @@ function ShortcutsPage() {
                     deletedGroupIds.current.clear();
                     movedLinkOrigins.current.clear();
                     automaticLinkGroups.current.clear();
+                    reorderedLinkGroups.current.clear();
                   } catch {
                     /* Keep the draft for retry. */
                   }
@@ -220,6 +224,7 @@ function ShortcutsPage() {
                   deletedGroupIds.current.clear();
                   movedLinkOrigins.current.clear();
                   automaticLinkGroups.current.clear();
+                  reorderedLinkGroups.current.clear();
                   setConflict(false);
                   setDraft(structuredClone(board!));
                 }}
