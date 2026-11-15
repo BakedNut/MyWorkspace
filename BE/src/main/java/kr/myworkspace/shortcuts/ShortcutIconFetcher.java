@@ -229,7 +229,10 @@ class ShortcutIconFetcher {
             .build()) {
       Set<URI> candidates = new LinkedHashSet<>();
       var page = read(client, resolver, original, original, true, deadline);
-      if (page != null) candidates.addAll(candidates(page.uri(), page.bytes()));
+      if (page != null) {
+        candidates.addAll(candidates(page.uri(), page.bytes()));
+        candidates.add(page.uri().resolve("/favicon.ico"));
+      }
       candidates.add(original.resolve("/favicon.ico"));
       for (URI uri : candidates) {
         if (System.nanoTime() >= deadline) break;

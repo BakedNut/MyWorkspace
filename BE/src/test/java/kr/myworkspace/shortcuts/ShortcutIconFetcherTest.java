@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.sun.net.httpserver.HttpServer;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import org.apache.hc.client5.http.DnsResolver;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
@@ -68,6 +71,70 @@ class ShortcutIconFetcherTest {
         .isTrue();
     assertThat(ShortcutIconFetcher.defaultIcon(URI.create("https://example.com/brand.svg")))
         .isFalse();
+  }
+
+  @Test
+  void discoversDefaultFaviconAtTheFinalPageHost() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    int port = server.getAddress().getPort();
+    var original = URI.create("http://original.test:" + port + "/");
+    var destination = URI.create("http://redirect.test:" + port + "/landing");
+    var requests = new CopyOnWriteArrayList<String>();
+    server.createContext(
+        "/",
+        exchange -> {
+          String host = exchange.getRequestHeaders().getFirst("Host");
+          String path = exchange.getRequestURI().getPath();
+          requests.add(host + path);
+          if (host.startsWith("original.test:") && path.equals("/")) {
+            exchange.getResponseHeaders().set("Location", destination.toString());
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+            return;
+          }
+          boolean icon = host.startsWith("redirect.test:") && path.equals("/favicon.ico");
+          String body =
+              icon
+                  ? "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path"
+                        + " fill='#0080ff' d='M0 0 L24 24 L0 24 Z'/></svg>"
+                  : "<html><head></head><body>fixture</body></html>";
+          byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+          int status = icon || path.equals("/landing") ? 200 : 404;
+          exchange.getResponseHeaders().set("Content-Type", icon ? "image/svg+xml" : "text/html");
+          exchange.sendResponseHeaders(status, bytes.length);
+          try (var output = exchange.getResponseBody()) {
+            output.write(bytes);
+          }
+          exchange.close();
+        });
+    var fetcher =
+        new ShortcutIconFetcher("") {
+          @Override
+          DnsResolver resolver(URI source, long deadline) {
+            // Resolve fixture hostnames to the in-process HTTP server.
+            return new DnsResolver() {
+              public InetAddress[] resolve(String host) {
+                return new InetAddress[] {InetAddress.getLoopbackAddress()};
+              }
+
+              public String resolveCanonicalHostname(String host) {
+                return host;
+              }
+            };
+          }
+        };
+    server.start();
+    try {
+      var icon = fetcher.fetch(original);
+      assertThat(icon).isNotNull();
+      assertThat(icon.mediaType()).isEqualTo("image/svg+xml");
+      assertThat(requests)
+          .contains("redirect.test:" + port + "/favicon.ico")
+          .doesNotContain("original.test:" + port + "/favicon.ico");
+    } finally {
+      fetcher.close();
+      server.stop(0);
+    }
   }
 
   @Test
