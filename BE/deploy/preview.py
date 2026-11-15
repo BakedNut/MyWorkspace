@@ -146,6 +146,10 @@ def build_metadata(root, jar, dist):
         if backend_dirty not in ("true", "false") or type(frontend["dirty"]) is not bool:
             raise ValueError("Invalid build flags")
         frontend_commit = frontend["commit"]
+        files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
+        if frontend["files"] != files:
+            raise ValueError("Frontend files do not match the build manifest")
     except (OSError, KeyError, ValueError, zipfile.BadZipFile) as error:
         raise ValueError("Build metadata is missing or invalid; rebuild BE and FE") from error
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()

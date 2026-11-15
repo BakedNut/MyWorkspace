@@ -27,7 +27,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         dist = self.root / "FE/dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("preview")
-        (dist / "build-info.json").write_text('{"commit":"commit","dirty":false}')
+        self.frontend_build()
         self.mock("LOCK_PATH", new=self.root / "preview-deploy.lock")
         self.old_jar = "/opt/myworkspace-preview/releases/old.jar"
         self.old_frontend = "/var/www/myworkspace-preview/releases/old"
@@ -37,6 +37,12 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.mock("subprocess.check_output", return_value="commit")
         self.private = self.mock("private_file")
         self.ready = self.mock("ready", return_value=True)
+
+    def frontend_build(self, commit="commit", dirty=False):
+        dist = self.root / "FE/dist"
+        files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
+        (dist / "build-info.json").write_text(json.dumps(dict(commit=commit, dirty=dirty, files=files)))
 
     def mock(self, name, **options):
         patcher = patch("preview." + name, **options)
@@ -184,6 +190,7 @@ class PreviewDeploymentTest(unittest.TestCase):
 
     def test_missing_referenced_script_aborts_before_backup_and_server_operations(self):
         (self.root / "FE/dist/index.html").write_text('<script type="module" src="/assets/missing.js"></script>')
+        self.frontend_build()
         with self.assertRaisesRegex(ValueError, "Referenced frontend asset is missing"):
             preview.deploy(self.root)
         self.run.assert_not_called()
@@ -222,7 +229,7 @@ class PreviewDeploymentTest(unittest.TestCase):
                     commit = "old" if component == "backend" else "commit"
                     archive.writestr("BOOT-INF/classes/git.properties", f"git.commit.id.full={commit}\ngit.dirty=false\n")
                 commit = "old" if component == "frontend" else "commit"
-                (self.root / "FE/dist/build-info.json").write_text('{"commit":"' + commit + '","dirty":false}')
+                self.frontend_build(commit=commit)
                 with self.assertRaisesRegex(ValueError, "commit"):
                     preview.deploy(self.root)
                 self.run.assert_not_called()
@@ -238,7 +245,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.private.assert_not_called()
 
     def test_deployment_receipt_preserves_dirty_build_flags(self):
-        (self.root / "FE/dist/build-info.json").write_text('{"commit":"commit","dirty":true}')
+        self.frontend_build(dirty=True)
         preview.deploy(self.root)
         receipt = json.loads(self.private.call_args.args[2])
         self.assertEqual(receipt["commit"], "commit")
@@ -283,8 +290,8 @@ class PreviewDeploymentTest(unittest.TestCase):
                 (dist / "images").mkdir(exist_ok=True)
                 (dist / "images/icon.png").write_bytes(b"original image")
                 (dist / "removed.txt").write_text("original file")
-                (dist / "build-info.json").write_text('{"commit":"commit","dirty":false}')
                 (dist / "new.txt").unlink(missing_ok=True)
+                self.frontend_build()
                 original = {path.relative_to(dist).as_posix(): path.read_bytes()
                             for path in dist.rglob("*") if path.is_file()}
                 uploaded = {}
@@ -352,6 +359,44 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertFalse(any(call.args[1][0] == "ln" for call in self.run.call_args_list))
         self.assertTrue(sources)
         self.assertTrue(all(not source.exists() for source in sources))
+
+    def test_mixed_frontend_builds_during_copy_abort_before_server_operations(self):
+        copytree = preview.shutil.copytree
+        for mixed in ("metadata", "asset", "added", "removed"):
+            with self.subTest(mixed=mixed):
+                dist = self.root / "FE/dist"
+                (dist / "icon.png").write_bytes(b"old image")
+                self.frontend_build()
+
+                def copy(source, destination):
+                    result = copytree(source, destination)
+                    if mixed == "metadata":
+                        (dist / "icon.png").write_bytes(b"new image")
+                        self.frontend_build()
+                        (destination / "build-info.json").write_bytes((dist / "build-info.json").read_bytes())
+                    elif mixed == "asset":
+                        (destination / "icon.png").write_bytes(b"new image")
+                    elif mixed == "added":
+                        (destination / "extra.txt").write_text("new file")
+                    else:
+                        (destination / "icon.png").unlink()
+                    return result
+
+                with patch.object(preview.shutil, "copytree", side_effect=copy):
+                    with self.assertRaisesRegex(ValueError, "Build metadata"):
+                        preview.deploy(self.root)
+                self.run.assert_not_called()
+                self.backup.assert_not_called()
+                self.push.assert_not_called()
+                self.private.assert_not_called()
+
+    def test_missing_frontend_hash_manifest_aborts_before_server_operations(self):
+        (self.root / "FE/dist/build-info.json").write_text('{"commit":"commit","dirty":false}')
+        with self.assertRaisesRegex(ValueError, "Build metadata"):
+            preview.deploy(self.root)
+        self.run.assert_not_called()
+        self.backup.assert_not_called()
+        self.private.assert_not_called()
 
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
