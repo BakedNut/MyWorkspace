@@ -25,6 +25,14 @@ export const Route = createFileRoute("/shortcuts")({
 
 const queryKey = ["shortcuts"];
 type CreateSubmission = { name: string; url?: string; groupSelectionVersion?: number };
+type OrganizeSubmission = {
+  board: Board;
+  deletedLinkIds: Set<string>;
+  automaticLinkGroups: Map<string, AutomaticShortcutPlacement>;
+  deletedGroupIds: Set<string>;
+  movedLinkOrigins: Map<string, string>;
+  reorderedLinkGroups: Map<string, string>;
+};
 
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 
@@ -38,6 +46,7 @@ function ShortcutsPage() {
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const fallbackFocus = useRef<HTMLButtonElement | null>(null);
   const editingBase = useRef<Board | null>(null);
+  const uncertainOrganize = useRef<OrganizeSubmission[]>([]);
   const deletedLinkIds = useRef(new Set<string>());
   const deletedGroupIds = useRef(new Set<string>());
   const movedLinkOrigins = useRef(new Map<string, string>());
@@ -163,6 +172,9 @@ function ShortcutsPage() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => {
+                  if (uncertainOrganize.current.length)
+                    void queryClient.invalidateQueries({ queryKey });
+                  uncertainOrganize.current = [];
                   setDraft(null);
                   editingBase.current = null;
                   deletedLinkIds.current.clear();
@@ -188,11 +200,28 @@ function ShortcutsPage() {
                         queryFn: () => api.shortcuts.get(),
                         staleTime: 0,
                       });
+                      let comparison = editingBase.current;
+                      let merged = latest;
+                      // Preserve each uncertain submission, then edits made after it.
+                      for (const pending of uncertainOrganize.current) {
+                        const submitted = structuredClone(pending);
+                        merged = reconcileShortcutBoard(
+                          comparison,
+                          submitted.board,
+                          merged,
+                          submitted.deletedLinkIds,
+                          submitted.automaticLinkGroups,
+                          submitted.deletedGroupIds,
+                          submitted.movedLinkOrigins,
+                          submitted.reorderedLinkGroups,
+                        );
+                        comparison = submitted.board;
+                      }
                       setDraft(
                         reconcileShortcutBoard(
-                          editingBase.current,
+                          comparison,
                           draft,
-                          latest,
+                          merged,
                           deletedLinkIds.current,
                           automaticLinkGroups.current,
                           deletedGroupIds.current,
@@ -201,11 +230,33 @@ function ShortcutsPage() {
                         ),
                       );
                       editingBase.current = structuredClone(latest);
+                      uncertainOrganize.current = [];
                       setConflict(false);
                       mutation.reset();
                       return;
                     }
-                    await mutation.mutateAsync(draft);
+                    const submitted: OrganizeSubmission = structuredClone({
+                      board: draft,
+                      deletedLinkIds: deletedLinkIds.current,
+                      automaticLinkGroups: automaticLinkGroups.current,
+                      deletedGroupIds: deletedGroupIds.current,
+                      movedLinkOrigins: movedLinkOrigins.current,
+                      reorderedLinkGroups: reorderedLinkGroups.current,
+                    });
+                    try {
+                      await mutation.mutateAsync(submitted.board);
+                    } catch (error) {
+                      if (!(error instanceof ApiError) || error.code === "NETWORK") {
+                        const pending = uncertainOrganize.current;
+                        if (
+                          JSON.stringify(pending.at(-1)?.board) === JSON.stringify(submitted.board)
+                        )
+                          pending.pop();
+                        pending.push(submitted);
+                      }
+                      throw error;
+                    }
+                    uncertainOrganize.current = [];
                     setDraft(null);
                     editingBase.current = null;
                     deletedLinkIds.current.clear();
@@ -231,6 +282,7 @@ function ShortcutsPage() {
                 onClick={() => {
                   mutation.reset();
                   editingBase.current = structuredClone(board!);
+                  uncertainOrganize.current = [];
                   deletedLinkIds.current.clear();
                   deletedGroupIds.current.clear();
                   movedLinkOrigins.current.clear();
