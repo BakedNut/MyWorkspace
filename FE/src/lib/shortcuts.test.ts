@@ -781,3 +781,37 @@ it("이동 대상 분류 삭제 시 서버 위치와 독립적인 로컬 순서 
   const result = reconcileShortcutBoard(base, draft, latest);
   expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["three", "two", "one"]);
 });
+
+it.each([
+  { local: ["one", "two", "x"], remote: ["x", "one", "two"], expected: ["one", "two", "x"] },
+  { local: ["x", "one", "two"], remote: ["one", "two", "x"], expected: ["x", "one", "two"] },
+  { local: ["one", "x", "two"], remote: ["x", "one", "two"], expected: ["one", "x", "two"] },
+  { local: ["one", "two", "x"], remote: ["x", "two", "one"], expected: ["two", "one", "x"] },
+])(
+  "같은 기존 링크의 직접 이동 위치는 초안을 우선한다 $local / $remote",
+  ({ local, remote, expected }) => {
+    const base = structuredClone(board);
+    const x = { id: "x", name: "이동 링크", url: "https://example.com/x" };
+    base.groups[1]!.links = [x];
+    const byId = new Map([...base.groups[0]!.links, x].map((link) => [link.id, link]));
+    const draft = moveShortcut(base, "x", "a");
+    draft.groups[0]!.links = local.map((id) => byId.get(id)!);
+    const latest = moveShortcut(base, "x", "a");
+    latest.groups[0]!.links = remote.map((id) => byId.get(id)!);
+    latest.revision++;
+    const result = reconcileShortcutBoard(base, draft, latest);
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(expected);
+  },
+);
+
+it("이전 자동 배치 위치는 후속 충돌에서도 서버 순서를 따른다", () => {
+  const base = structuredClone(board);
+  const x = { id: "x", name: "자동 배치 링크", url: "https://example.com/x" };
+  base.groups[1]!.links = [x];
+  const draft = moveShortcut(base, "x", "a");
+  const latest = moveShortcut(base, "x", "a", "one");
+  latest.revision++;
+  const placements = new Map([["x", "a"]]);
+  const result = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["x", "one", "two"]);
+});

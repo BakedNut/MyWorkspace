@@ -61,10 +61,15 @@ function mergeShortcutOrder(
   draft: string[],
   latest: string[],
   ids: string[],
+  locallyPlacedIds: ReadonlySet<string> = new Set(),
 ): string[] {
   const following = new Map(ids.map((id) => [id, new Set<string>()]));
   const original = new Map(base.map((id, index) => [id, index]));
-  const constrain = (items: string[], changesOnly: boolean) => {
+  const constrain = (
+    items: string[],
+    changesOnly: boolean,
+    placedIds: ReadonlySet<string> = new Set(),
+  ) => {
     const present = items.filter((id) => following.has(id));
     for (let left = 0; left < present.length; left++) {
       for (let right = left + 1; right < present.length; right++) {
@@ -72,6 +77,8 @@ function mergeShortcutOrder(
         const after = present[right]!;
         if (
           changesOnly &&
+          !placedIds.has(before) &&
+          !placedIds.has(after) &&
           (!original.has(before) ||
             !original.has(after) ||
             original.get(before)! < original.get(after)!)
@@ -87,7 +94,7 @@ function mergeShortcutOrder(
       }
     }
   };
-  constrain(draft, true);
+  constrain(draft, true, locallyPlacedIds);
   constrain(latest, true);
   constrain(latest, false);
   constrain(draft, false);
@@ -294,6 +301,15 @@ export function reconcileShortcutBoard(
         local.map((link) => link.id),
         saved.map((link) => link.id),
         members.map((link) => link.id),
+        new Set(
+          local
+            .filter((link) =>
+              comparisonLinks.some(
+                (before) => before.id === link.id && before.groupId !== group.id,
+              ),
+            )
+            .map((link) => link.id),
+        ),
       );
       const byId = new Map(members.map((link) => [link.id, link]));
       return {
