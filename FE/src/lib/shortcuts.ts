@@ -391,12 +391,18 @@ export function reconcileShortcutBoard(
       .links.map((link) => link.id);
     // Keep the original baseline while adding neighbors outside explicit placement.
     const neighbors = order.filter((linkId) => linkId !== id || !reorderedLinkGroups.has(id));
-    placement.order = mergeShortcutOrder(
-      [],
-      placement.order,
-      neighbors,
-      order,
-      new Set(placement.order),
+    const present = new Set(order);
+    const retained = placement.order.filter((linkId) => present.has(linkId));
+    const positions = new Map(retained.map((linkId, index) => [linkId, index]));
+    const additions = Array.from({ length: retained.length + 1 }, (): string[] => []);
+    let insertionIndex = 0;
+    for (const linkId of neighbors) {
+      const position = positions.get(linkId);
+      if (position === undefined) additions[insertionIndex]!.push(linkId);
+      else insertionIndex = Math.max(insertionIndex, position + 1);
+    }
+    placement.order = additions.flatMap((added, index) =>
+      index < retained.length ? [...added, retained[index]!] : added,
     );
   }
   return result;

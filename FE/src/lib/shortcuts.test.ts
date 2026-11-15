@@ -1165,3 +1165,50 @@ it.each(["front", "middle", "baseline"])(
     expect(merged.groups[1]!.collapsed).toBe(true);
   },
 );
+
+it("지원 한도 200개 자동 배치를 반복 전체 정렬 없이 병합한다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      { id: "a", name: "A", collapsed: false, links: [] },
+      { id: "b", name: "B", collapsed: false, links: [] },
+    ],
+  };
+  const latest = structuredClone(base);
+  latest.revision++;
+  latest.groups[0]!.links = Array.from({ length: 200 }, (_, index) => ({
+    id: `link-${index}`,
+    name: `링크 ${index}`,
+    url: `https://example.com/${index}`,
+  }));
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const deletedGroups = new Set(["a"]);
+  let started = performance.now();
+  let merged = reconcileShortcutBoard(
+    base,
+    { ...base, groups: base.groups.slice(1) },
+    latest,
+    new Set(),
+    placements,
+    deletedGroups,
+  );
+  expect(performance.now() - started).toBeLessThan(5000);
+  expect(merged.groups[0]!.links).toEqual(latest.groups[0]!.links);
+  const updated = structuredClone(latest);
+  updated.revision++;
+  updated.groups[1]!.name = "서버 수정";
+  started = performance.now();
+  merged = reconcileShortcutBoard(latest, merged, updated, new Set(), placements, deletedGroups);
+  expect(performance.now() - started).toBeLessThan(5000);
+  expect(merged.groups[0]!.name).toBe("서버 수정");
+  const replaced = structuredClone(updated);
+  replaced.revision++;
+  replaced.groups[0]!.links[199] = { id: "new", name: "새 이웃", url: "https://example.com/new" };
+  started = performance.now();
+  merged = reconcileShortcutBoard(updated, merged, replaced, new Set(), placements, deletedGroups);
+  expect(performance.now() - started).toBeLessThan(5000);
+  expect(merged.groups[0]!.links).toEqual(replaced.groups[0]!.links);
+  const expected = merged.groups[0]!.links.map((link) => link.id);
+  expect(placements.size).toBe(200);
+  for (const placement of placements.values()) expect(placement.order).toEqual(expected);
+});
