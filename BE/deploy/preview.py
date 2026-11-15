@@ -7,6 +7,7 @@ import gzip
 import fcntl
 import hashlib
 import json
+import io
 import subprocess
 import sys
 import time
@@ -132,7 +133,8 @@ for path,asset in json.loads(sys.argv[2]).items():
 
 def build_metadata(root, jar, dist):
     try:
-        with zipfile.ZipFile(jar) as archive:
+        jar_bytes = jar.read_bytes()
+        with zipfile.ZipFile(io.BytesIO(jar_bytes)) as archive:
             properties = dict(line.split("=", 1) for line in
                               archive.read("BOOT-INF/classes/git.properties").decode().splitlines()
                               if line.startswith("git."))
@@ -147,7 +149,8 @@ def build_metadata(root, jar, dist):
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     if backend_commit != commit or frontend_commit != commit:
         raise ValueError("Build commit does not match current checkout; rebuild BE and FE")
-    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"])
+    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"],
+                backendSha256=hashlib.sha256(jar_bytes).hexdigest())
 
 
 def backup(stamp):
@@ -224,7 +227,7 @@ def _deploy(root=None):
     target = "/opt/myworkspace-preview/releases/" + release + ".jar"
     frontend = "/var/www/myworkspace-preview/releases/" + release
     subprocess.run(["pct", "push", "200", str(jar), target, "--perms", "0644"], capture_output=True, check=True)
-    if run(200, ["sha256sum", target]).split()[0] != hashlib.sha256(jar.read_bytes()).hexdigest():
+    if run(200, ["sha256sum", target]).split()[0] != build["backendSha256"]:
         raise RuntimeError("Uploaded JAR checksum mismatch")
     run(200, ["install", "-d", "-m", "755", frontend])
     for path in dist.rglob("*"):

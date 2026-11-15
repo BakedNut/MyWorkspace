@@ -245,6 +245,37 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertFalse(receipt["backendDirty"])
         self.assertTrue(receipt["frontendDirty"])
 
+    def test_jar_rebuild_during_backup_aborts_before_activation(self):
+        def rebuild(stamp):
+            jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr("BOOT-INF/classes/git.properties", "git.commit.id.full=other\ngit.dirty=false\n")
+            return Path("/tmp/preview.sql.gz")
+        self.backup.side_effect = rebuild
+        with self.assertRaisesRegex(RuntimeError, "JAR checksum"):
+            preview.deploy(self.root)
+        self.private.assert_not_called()
+        commands = [call.args[1] for call in self.run.call_args_list]
+        self.assertFalse(any(args[0] == "ln" for args in commands))
+
+    def test_jar_rebuild_after_upload_keeps_the_verified_artifact_hash(self):
+        jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
+        original = jar.read_bytes()
+        def push(args, **options):
+            if args[:3] == ["pct", "push", "200"] and args[3] == str(jar):
+                with zipfile.ZipFile(jar, "w") as archive:
+                    archive.writestr("BOOT-INF/classes/git.properties", "git.commit.id.full=other\ngit.dirty=false\n")
+        def run(ct, args, data=None):
+            if args[0] == "sha256sum" and args[1].endswith(".jar"):
+                return hashlib.sha256(original).hexdigest() + " file"
+            return self.server_run(ct, args, data)
+        self.push.side_effect = push
+        self.run.side_effect = run
+        preview.deploy(self.root)
+        receipt = json.loads(self.private.call_args.args[2])
+        self.assertEqual(receipt["commit"], "commit")
+        self.assertEqual(receipt["backendSha256"], hashlib.sha256(original).hexdigest())
+
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
