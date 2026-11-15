@@ -1220,3 +1220,71 @@ it.each(["https:example.com", "https:/example.com", "https://example.com/path"])
     );
   },
 );
+
+it.each(
+  ["link", "group"].flatMap((kind) =>
+    [false, true].flatMap((alreadyRecreated) =>
+      ["cancel", "recreate"].map((action) => ({ kind, alreadyRecreated, action })),
+    ),
+  ),
+)(
+  "확인된 추가 항목이 다음 충돌에서 삭제돼도 재생성을 확인한다 $kind / 재생성 이력 $alreadyRecreated / $action",
+  async ({ kind, alreadyRecreated, action }) => {
+    let persisted = structuredClone(initial);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(persisted));
+    let calls = 0;
+    const deletionCall = alreadyRecreated ? 5 : 3;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === deletionCall) {
+        persisted = { ...structuredClone(initial), revision: persisted.revision + 1 };
+        throw new ApiError("삭제와 충돌", "CONFLICT");
+      }
+      if (input.revision !== persisted.revision) throw new ApiError("다른 곳", "CONFLICT");
+      persisted = { ...structuredClone(input), revision: input.revision + 1 };
+      if (calls === 1 || (alreadyRecreated && calls === 3)) {
+        if (calls === 1 && alreadyRecreated)
+          persisted = { ...structuredClone(initial), revision: persisted.revision + 1 };
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      return persisted;
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    fireEvent.click(screen.getByRole("button", { name: kind === "group" ? "분류 추가" : "추가" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "첫 입력" } });
+    if (kind === "link")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    expect(await within(modal).findByRole("alert")).toHaveTextContent("응답 유실");
+    if (alreadyRecreated) {
+      fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+      fireEvent.click(await within(modal).findByRole("button", { name: "다시 추가" }));
+      await waitFor(() => expect(within(modal).getByRole("alert")).toHaveTextContent("응답 유실"));
+    }
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "수정 입력" } });
+    fireEvent.click(
+      within(modal).getByRole("button", { name: alreadyRecreated ? "다시 추가" : "완료" }),
+    );
+    await waitFor(() => expect(within(modal).getByRole("alert")).toHaveTextContent("삭제와 충돌"));
+    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(alreadyRecreated ? 4 : 3));
+    expect(within(modal).getByRole("button", { name: "완료" })).toBeEnabled();
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await within(modal).findByRole("button", { name: "다시 추가" });
+    expect(within(modal).getByRole("alert")).toHaveTextContent("최신 목록");
+    expect(within(modal).getByLabelText("이름")).toHaveValue("수정 입력");
+    expect(save).toHaveBeenCalledTimes(deletionCall);
+    expect(persisted.groups).toEqual(initial.groups);
+    fireEvent.click(
+      within(modal).getByRole("button", { name: action === "cancel" ? "취소" : "다시 추가" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(deletionCall + (action === "recreate" ? 1 : 0));
+    if (action === "cancel") expect(persisted.groups).toEqual(initial.groups);
+    else if (kind === "group") expect(persisted.groups.at(-1)!.name).toBe("수정 입력");
+    else expect(persisted.groups[0]!.links.at(-1)!.name).toBe("수정 입력");
+  },
+);

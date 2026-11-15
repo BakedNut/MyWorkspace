@@ -88,31 +88,34 @@ function ShortcutsPage() {
 
   const confirmCreate = async (current: Board): Promise<Board> => {
     const pending = attemptedCreate.current;
-    if (!pending?.uncertain) return current;
-    let confirmed: Board;
-    try {
-      // Reuse the exact uncertain write before accepting another payload at its revision.
-      confirmed = await mutation.mutateAsync(pending.board);
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.code !== "CONFLICT") {
-        if (error instanceof ApiError && error.code !== "NETWORK") pending.uncertain = false;
-        throw error;
+    if (!pending) return current;
+    let confirmed = current;
+    if (pending.uncertain) {
+      try {
+        // Reuse the exact uncertain write before accepting another payload at its revision.
+        confirmed = await mutation.mutateAsync(pending.board);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "CONFLICT") {
+          if (error instanceof ApiError && error.code !== "NETWORK") pending.uncertain = false;
+          throw error;
+        }
+        // Reuse the conflict-triggered refresh if it has already completed.
+        confirmed = await queryClient.fetchQuery({
+          queryKey,
+          queryFn: () => api.shortcuts.get(),
+          staleTime: Infinity,
+        });
       }
-      // Reuse the conflict-triggered refresh if it has already completed.
-      confirmed = await queryClient.fetchQuery({
-        queryKey,
-        queryFn: () => api.shortcuts.get(),
-        staleTime: Infinity,
-      });
+      pending.uncertain = false;
     }
-    pending.uncertain = false;
     const present =
       dialog?.kind === "link"
         ? confirmed.groups.some((group) =>
             group.links.some((link) => link.id === dialog.operationId),
           )
         : confirmed.groups.some((group) => group.id === dialog?.operationId);
-    if (!present) {
+    if (present) setRequiresRecreation(false);
+    else if (!requiresRecreation) {
       setRequiresRecreation(true);
       throw new Error(
         "최신 목록에 이 항목이 없습니다. 다른 곳에서 삭제했을 수 있습니다. 다시 만들려면 ‘다시 추가’를 누르세요.",
