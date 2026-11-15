@@ -1,6 +1,8 @@
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ShortcutBoard } from "@/types/domain";
 
+export type AutomaticShortcutPlacement = { groupId: string; order: string[] };
+
 // Java URI rejects some characters that the browser URL parser preserves.
 function encodeShortcutUriPart(value: string): string {
   return value
@@ -190,18 +192,14 @@ function mergeShortcutItems<T extends { id: string }>(
   ).map((id) => merged.get(id)!);
 }
 
-function shortcutPositionChanged(
-  before: { id: string }[],
-  after: { id: string }[],
-  id: string,
-): boolean {
-  const previousIndex = before.findIndex((link) => link.id === id);
-  const currentIndex = after.findIndex((link) => link.id === id);
+function shortcutPositionChanged(before: string[], after: string[], id: string): boolean {
+  const previousIndex = before.indexOf(id);
+  const currentIndex = after.indexOf(id);
   return (
     previousIndex >= 0 &&
     currentIndex >= 0 &&
     before.some((link, index) => {
-      const nextIndex = after.findIndex((item) => item.id === link.id);
+      const nextIndex = after.indexOf(link);
       const wasBefore = index < previousIndex;
       const isBefore = nextIndex < currentIndex;
       return nextIndex >= 0 && wasBefore !== isBefore;
@@ -214,7 +212,8 @@ export function recordShortcutMoves(
   after: ShortcutBoard,
   movedLinkOrigins: Map<string, string>,
   reorderedLinkGroups: Map<string, string> = new Map(),
-  automaticLinkGroups: ReadonlyMap<string, string> = new Map(),
+  automaticLinkGroups: ReadonlyMap<string, AutomaticShortcutPlacement> = new Map(),
+  movedLinkId?: string,
 ): void {
   for (const group of after.groups) {
     for (const link of group.links) {
@@ -223,11 +222,17 @@ export function recordShortcutMoves(
       );
       if (!previous) continue;
       if (previous.id === group.id) {
+        const placement = automaticLinkGroups.get(link.id);
+        if (link.id !== movedLinkId || placement?.groupId !== group.id) continue;
         if (
-          automaticLinkGroups.get(link.id) === group.id &&
-          shortcutPositionChanged(previous.links, group.links, link.id)
+          shortcutPositionChanged(
+            placement.order,
+            group.links.map((item) => item.id),
+            link.id,
+          )
         )
           reorderedLinkGroups.set(link.id, group.id);
+        else reorderedLinkGroups.delete(link.id);
         continue;
       }
       reorderedLinkGroups.delete(link.id);
@@ -243,20 +248,21 @@ export function reconcileShortcutBoard(
   draft: ShortcutBoard,
   latest: ShortcutBoard,
   deletedLinkIds: ReadonlySet<string> = new Set(),
-  automaticLinkGroups: Map<string, string> = new Map(),
+  automaticLinkGroups: Map<string, AutomaticShortcutPlacement> = new Map(),
   deletedGroupIds: ReadonlySet<string> = new Set(),
   movedLinkOrigins: Map<string, string> = new Map(),
   reorderedLinkGroups: Map<string, string> = new Map(),
 ): ShortcutBoard {
   const links = (board: ShortcutBoard) =>
     board.groups.flatMap((group) => group.links.map((link) => ({ ...link, groupId: group.id })));
+  const previousPlacements = new Map(automaticLinkGroups);
   const baseLinks = links(base);
   const latestLinks = links(latest);
   const draftLinks = links(draft);
   // Fallback placement is the comparison baseline until the next explicit move.
   const comparisonLinks = baseLinks.map((link) => ({
     ...link,
-    groupId: automaticLinkGroups.get(link.id) ?? link.groupId,
+    groupId: automaticLinkGroups.get(link.id)?.groupId ?? link.groupId,
   }));
   const mergedLinks = mergeShortcutItems(
     comparisonLinks,
@@ -306,7 +312,11 @@ export function reconcileShortcutBoard(
       groups.push(destination);
     }
     link.groupId = destination.id;
-    automaticLinkGroups.set(link.id, destination.id);
+    const previous = previousPlacements.get(link.id);
+    automaticLinkGroups.set(link.id, {
+      groupId: destination.id,
+      order: previous?.groupId === destination.id ? previous.order : [],
+    });
   }
   for (const [id] of movedLinkOrigins) {
     const original = baseLinks.find((link) => link.id === id);
@@ -324,11 +334,21 @@ export function reconcileShortcutBoard(
     const local = draft.groups.find((group) => group.id === groupId);
     if (
       !mergedLinks.some((link) => link.id === id && link.groupId === groupId) ||
-      (saved?.id === groupId && local && !shortcutPositionChanged(saved.links, local.links, id))
+      (saved?.id === groupId &&
+        local &&
+        !shortcutPositionChanged(
+          saved.links.map((link) => link.id),
+          local.links.map((link) => link.id),
+          id,
+        ))
     )
       reorderedLinkGroups.delete(id);
   }
-  return {
+  for (const [id, placement] of previousPlacements) {
+    if (!automaticLinkGroups.has(id) && reorderedLinkGroups.get(id) === placement.groupId)
+      automaticLinkGroups.set(id, placement);
+  }
+  const result = {
     revision: latest.revision,
     groups: groups.map((group) => {
       const members = mergedLinks.filter((link) => link.groupId === group.id);
@@ -366,4 +386,11 @@ export function reconcileShortcutBoard(
       };
     }),
   };
+  for (const placement of automaticLinkGroups.values()) {
+    if (!placement.order.length)
+      placement.order = result.groups
+        .find((group) => group.id === placement.groupId)!
+        .links.map((link) => link.id);
+  }
+  return result;
 }

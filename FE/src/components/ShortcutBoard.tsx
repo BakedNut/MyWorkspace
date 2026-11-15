@@ -43,7 +43,7 @@ interface Props {
   board: Board;
   editing: boolean;
   busy: boolean;
-  onChange(board: Board, deletedLinkId?: string): void;
+  onChange(board: Board, deletedLinkId?: string, movedLinkId?: string): void;
   onEditLink(link: ShortcutLink, groupId: string): void;
   onEditGroup(group: ShortcutGroup): void;
   onDeleteGroup(group: ShortcutGroup): void;
@@ -74,7 +74,11 @@ export function ShortcutBoard({
       const end = board.groups.findIndex((group) => group.id === to["groupId"]);
       onChange({ ...board, groups: arrayMove(board.groups, start, end) });
     } else if (from["kind"] === "link") {
-      onChange(moveShortcut(board, from["linkId"], to["groupId"], to["linkId"]));
+      onChange(
+        moveShortcut(board, from["linkId"], to["groupId"], to["linkId"]),
+        undefined,
+        from["linkId"],
+      );
     }
   };
   return (

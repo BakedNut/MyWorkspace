@@ -6,7 +6,11 @@ import { ApiError, api } from "@/api";
 import { ShortcutBoard } from "@/components/ShortcutBoard";
 import { ShortcutDialog, type ShortcutDialogTarget } from "@/components/ShortcutDialogs";
 import { Button } from "@/components/ui/button";
-import { reconcileShortcutBoard, recordShortcutMoves } from "@/lib/shortcuts";
+import {
+  reconcileShortcutBoard,
+  recordShortcutMoves,
+  type AutomaticShortcutPlacement,
+} from "@/lib/shortcuts";
 import type { ShortcutBoard as Board } from "@/types/domain";
 
 export const Route = createFileRoute("/shortcuts")({
@@ -37,7 +41,7 @@ function ShortcutsPage() {
   const deletedLinkIds = useRef(new Set<string>());
   const deletedGroupIds = useRef(new Set<string>());
   const movedLinkOrigins = useRef(new Map<string, string>());
-  const automaticLinkGroups = useRef(new Map<string, string>());
+  const automaticLinkGroups = useRef(new Map<string, AutomaticShortcutPlacement>());
   const reorderedLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
   const [requiresRecreation, setRequiresRecreation] = useState(false);
@@ -66,7 +70,7 @@ function ShortcutsPage() {
   const board = draft ?? query.data;
   const editing = draft !== null;
   const busy = mutation.isPending || query.isFetching;
-  const change = async (next: Board, attempt?: CreateSubmission) => {
+  const change = async (next: Board, attempt?: CreateSubmission, movedLinkId?: string) => {
     if (draft) {
       recordShortcutMoves(
         draft,
@@ -74,6 +78,7 @@ function ShortcutsPage() {
         movedLinkOrigins.current,
         reorderedLinkGroups.current,
         automaticLinkGroups.current,
+        movedLinkId,
       );
       setDraft(next);
       return;
@@ -296,9 +301,9 @@ function ShortcutsPage() {
             board={board}
             editing={editing}
             busy={busy}
-            onChange={(next, deletedLinkId) => {
+            onChange={(next, deletedLinkId, movedLinkId) => {
               if (deletedLinkId) deletedLinkIds.current.add(deletedLinkId);
-              void change(next).catch(() => {});
+              void change(next, undefined, movedLinkId).catch(() => {});
             }}
             onEditLink={(link, groupId) => openDialog({ kind: "link", link, groupId })}
             onEditGroup={(group) => openDialog({ kind: "group", group })}
