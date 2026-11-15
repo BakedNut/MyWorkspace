@@ -386,11 +386,19 @@ export function reconcileShortcutBoard(
       };
     }),
   };
-  for (const placement of automaticLinkGroups.values()) {
-    if (!placement.order.length)
-      placement.order = result.groups
-        .find((group) => group.id === placement.groupId)!
-        .links.map((link) => link.id);
+  for (const [id, placement] of automaticLinkGroups) {
+    const order = result.groups
+      .find((group) => group.id === placement.groupId)!
+      .links.map((link) => link.id);
+    // Keep the original baseline while adding neighbors outside explicit placement.
+    const neighbors = order.filter((linkId) => linkId !== id || !reorderedLinkGroups.has(id));
+    placement.order = mergeShortcutOrder(
+      [],
+      placement.order,
+      neighbors,
+      order,
+      new Set(placement.order),
+    );
   }
   return result;
 }

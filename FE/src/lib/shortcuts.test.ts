@@ -1032,3 +1032,73 @@ it.each(["other-link", "undo"])("자동 배치의 실제 드래그 대상과 되
   );
   expect(reordered.has("x")).toBe(false);
 });
+
+it.each([false, true])(
+  "자동 배치 기준에 새로 병합된 이웃을 포함한다 기존 정렬 %s",
+  (previousEdit) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+      ],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const y = { id: "y", name: "Y", url: "https://example.com/y" };
+    latest.groups[0]!.links = [x];
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    let draft = previousEdit ? moveShortcut(restored, "x", "b", "one") : restored;
+    if (previousEdit) recordShortcutMoves(restored, draft, origins, reordered, placements, "x");
+    const added = structuredClone(latest);
+    added.revision++;
+    added.groups[1]!.links.push(y);
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      added,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(placements.get("x")?.order).toEqual(["one", "two", "y", "x"]);
+    draft = moveShortcut(merged, "x", "b", previousEdit ? "two" : "y");
+    recordShortcutMoves(merged, draft, origins, reordered, placements, "x");
+    expect(reordered.get("x")).toBe("b");
+    const updated = structuredClone(added);
+    updated.revision++;
+    updated.groups[1]!.collapsed = true;
+    const result = reconcileShortcutBoard(
+      added,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two", "x", "y"]);
+    expect(result.groups[0]!.collapsed).toBe(true);
+    expect(placements.get("x")?.order).toEqual(["one", "two", "y", "x"]);
+    const undone = moveShortcut(result, "x", "b");
+    recordShortcutMoves(result, undone, origins, reordered, placements, "x");
+    expect(reordered.has("x")).toBe(false);
+  },
+);
