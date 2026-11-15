@@ -285,20 +285,23 @@ export function reconcileShortcutBoard(
     revision: latest.revision,
     groups: groups.map((group) => {
       const members = mergedLinks.filter((link) => link.groupId === group.id);
-      const memberIds = new Set(members.map((link) => link.id));
-      const order = mergeShortcutItems(
-        base.groups.find((item) => item.id === group.id)?.links ?? [],
-        draft.groups.find((item) => item.id === group.id)?.links ?? [],
-        latest.groups.find((item) => item.id === group.id)?.links ?? [],
-      ).filter((link) => memberIds.has(link.id));
-      const orderedIds = new Set(order.map((link) => link.id));
+      const saved = latest.groups.find((item) => item.id === group.id)?.links ?? [];
+      const local = (draft.groups.find((item) => item.id === group.id)?.links ?? []).filter(
+        (link) => !automaticLinkGroups.has(link.id) || saved.some((item) => item.id === link.id),
+      );
+      const order = mergeShortcutOrder(
+        (base.groups.find((item) => item.id === group.id)?.links ?? []).map((link) => link.id),
+        local.map((link) => link.id),
+        saved.map((link) => link.id),
+        members.map((link) => link.id),
+      );
       const byId = new Map(members.map((link) => [link.id, link]));
       return {
         ...group,
-        links: [
-          ...order.map((link) => byId.get(link.id)!),
-          ...members.filter((link) => !orderedIds.has(link.id)),
-        ].map(({ groupId: _groupId, ...link }) => link),
+        links: order.map((id) => {
+          const { groupId: _groupId, ...link } = byId.get(id)!;
+          return link;
+        }),
       };
     }),
   };

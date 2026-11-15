@@ -131,7 +131,7 @@ it("링크 소속 변경만으로 삭제된 분류를 복원하지 않는다", (
   latest.groups = latest.groups.filter((group) => group.id !== "b");
   const result = reconcileShortcutBoard(board, draft, latest);
   expect(result.groups.map((group) => group.id)).toEqual(["a"]);
-  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two"]);
 });
 
 it("모든 분류 삭제 후에도 새로 추가된 바로가기를 담을 분류를 복원한다", () => {
@@ -751,3 +751,33 @@ it.each(["missing-target", "existing-target", "deleted-server-group"])(
     );
   },
 );
+
+it.each([
+  ["three", "one", "two"],
+  ["two", "three", "one"],
+  ["three", "two", "one"],
+])("이동 대상 분류 삭제 시 서버의 저장 순서를 보존한다 %j", (...savedOrder) => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push({ id: "three", name: "세 번째", url: "https://example.com/3" });
+  const draft = moveShortcut(base, "three", "b");
+  const latest = structuredClone(base);
+  latest.revision++;
+  const byId = new Map(latest.groups[0]!.links.map((link) => [link.id, link]));
+  latest.groups[0]!.links = savedOrder.map((id) => byId.get(id)!);
+  latest.groups.pop();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups).toHaveLength(1);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(savedOrder);
+});
+
+it("이동 대상 분류 삭제 시 서버 위치와 독립적인 로컬 순서 변경을 합친다", () => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push({ id: "three", name: "세 번째", url: "https://example.com/3" });
+  const moved = moveShortcut(base, "three", "b");
+  const draft = moveShortcut(moved, "two", "a", "one");
+  const latest = moveShortcut(base, "three", "a", "one");
+  latest.revision++;
+  latest.groups.pop();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["three", "two", "one"]);
+});
