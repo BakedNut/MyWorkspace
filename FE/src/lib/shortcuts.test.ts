@@ -1102,3 +1102,66 @@ it.each([false, true])(
     expect(reordered.has("x")).toBe(false);
   },
 );
+
+it.each(["front", "middle", "baseline"])(
+  "자동 배치 분류로 되돌릴 때 지정한 위치를 보존한다 %s",
+  (position) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links = [{ id: "x", name: "X", url: "https://example.com/x" }];
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const away = moveShortcut(restored, "x", "c");
+    recordShortcutMoves(restored, away, origins, reordered, placements, "x");
+    const draft = moveShortcut(
+      away,
+      "x",
+      "b",
+      position === "front" ? "one" : position === "middle" ? "two" : undefined,
+    );
+    recordShortcutMoves(away, draft, origins, reordered, placements, "x");
+    expect(origins.has("x")).toBe(false);
+    expect(reordered.has("x")).toBe(position !== "baseline");
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[2]!.collapsed = true;
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(merged.groups[0]!.links.map((link) => link.id)).toEqual(
+      position === "front"
+        ? ["x", "one", "two"]
+        : position === "middle"
+          ? ["one", "x", "two"]
+          : ["one", "two", "x"],
+    );
+    expect(merged.groups[1]!.collapsed).toBe(true);
+  },
+);

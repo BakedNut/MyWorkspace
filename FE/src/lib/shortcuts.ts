@@ -221,24 +221,23 @@ export function recordShortcutMoves(
         item.links.some((entry) => entry.id === link.id),
       );
       if (!previous) continue;
-      if (previous.id === group.id) {
-        const placement = automaticLinkGroups.get(link.id);
-        if (link.id !== movedLinkId || placement?.groupId !== group.id) continue;
-        if (
-          shortcutPositionChanged(
-            placement.order,
-            group.links.map((item) => item.id),
-            link.id,
-          )
+      if (previous.id !== group.id) {
+        reorderedLinkGroups.delete(link.id);
+        const origin = movedLinkOrigins.get(link.id) ?? previous.id;
+        if (group.id === origin) movedLinkOrigins.delete(link.id);
+        else movedLinkOrigins.set(link.id, origin);
+      } else if (link.id !== movedLinkId) continue;
+      const placement = automaticLinkGroups.get(link.id);
+      if (placement?.groupId !== group.id) continue;
+      if (
+        shortcutPositionChanged(
+          placement.order,
+          group.links.map((item) => item.id),
+          link.id,
         )
-          reorderedLinkGroups.set(link.id, group.id);
-        else reorderedLinkGroups.delete(link.id);
-        continue;
-      }
-      reorderedLinkGroups.delete(link.id);
-      const origin = movedLinkOrigins.get(link.id) ?? previous.id;
-      if (group.id === origin) movedLinkOrigins.delete(link.id);
-      else movedLinkOrigins.set(link.id, origin);
+      )
+        reorderedLinkGroups.set(link.id, group.id);
+      else reorderedLinkGroups.delete(link.id);
     }
   }
 }
