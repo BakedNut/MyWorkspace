@@ -214,6 +214,7 @@ export function recordShortcutMoves(
   after: ShortcutBoard,
   movedLinkOrigins: Map<string, string>,
   reorderedLinkGroups: Map<string, string> = new Map(),
+  automaticLinkGroups: ReadonlyMap<string, string> = new Map(),
 ): void {
   for (const group of after.groups) {
     for (const link of group.links) {
@@ -222,7 +223,10 @@ export function recordShortcutMoves(
       );
       if (!previous) continue;
       if (previous.id === group.id) {
-        if (shortcutPositionChanged(previous.links, group.links, link.id))
+        if (
+          automaticLinkGroups.get(link.id) === group.id &&
+          shortcutPositionChanged(previous.links, group.links, link.id)
+        )
           reorderedLinkGroups.set(link.id, group.id);
         continue;
       }

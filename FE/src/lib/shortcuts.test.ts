@@ -851,7 +851,7 @@ it.each(["front", "middle", "unrelated", "remote-move", "remote-delete"])(
       "b",
       mode === "middle" ? "two" : "one",
     );
-    recordShortcutMoves(restored, draft, origins, reordered);
+    recordShortcutMoves(restored, draft, origins, reordered, placements);
     const updated = structuredClone(latest);
     updated.revision++;
     updated.groups[1]!.links[1]!.name = "서버 수정";
@@ -910,8 +910,9 @@ it("서버가 직접 정렬 위치를 수용하면 이전 기록으로 새 서�
   const reordered = new Map<string, string>();
   const origins = new Map<string, string>();
   const draft = moveShortcut(base, "two", "a", "one");
-  recordShortcutMoves(base, draft, origins, reordered);
-  expect(reordered.size).toBe(2);
+  const placements = new Map([["two", "a"]]);
+  recordShortcutMoves(base, draft, origins, reordered, placements);
+  expect(reordered.size).toBe(1);
   const saved = { ...structuredClone(draft), revision: base.revision + 1 };
   const merged = reconcileShortcutBoard(
     base,
@@ -936,4 +937,38 @@ it("서버가 직접 정렬 위치를 수용하면 이전 기록으로 새 서�
     reordered,
   );
   expect(final.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two"]);
+});
+
+it.each([false, true])("일반 정렬은 최종 초안의 변경된 상대 순서만 반영한다 되돌림 %s", (undo) => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push(
+    { id: "three", name: "세 번째", url: "https://example.com/3" },
+    { id: "four", name: "네 번째", url: "https://example.com/4" },
+  );
+  const origins = new Map<string, string>();
+  const reordered = new Map<string, string>();
+  const placements = new Map<string, string>();
+  const changed = moveShortcut(base, "two", "a", "one");
+  recordShortcutMoves(base, changed, origins, reordered, placements);
+  const draft = undo ? moveShortcut(changed, "two", "a", "one") : changed;
+  recordShortcutMoves(changed, draft, origins, reordered, placements);
+  const latest = structuredClone(base);
+  latest.revision++;
+  const savedOrder = undo ? ["two", "one", "three", "four"] : ["one", "three", "two", "four"];
+  const byId = new Map(base.groups[0]!.links.map((link) => [link.id, link]));
+  latest.groups[0]!.links = savedOrder.map((id) => byId.get(id)!);
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(merged.groups[0]!.links.map((link) => link.id)).toEqual(
+    undo ? savedOrder : ["three", "two", "one", "four"],
+  );
+  expect(reordered.size).toBe(0);
 });

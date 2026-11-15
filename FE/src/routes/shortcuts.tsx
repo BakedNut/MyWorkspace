@@ -68,7 +68,13 @@ function ShortcutsPage() {
   const busy = mutation.isPending || query.isFetching;
   const change = async (next: Board, attempt?: CreateSubmission) => {
     if (draft) {
-      recordShortcutMoves(draft, next, movedLinkOrigins.current, reorderedLinkGroups.current);
+      recordShortcutMoves(
+        draft,
+        next,
+        movedLinkOrigins.current,
+        reorderedLinkGroups.current,
+        automaticLinkGroups.current,
+      );
       setDraft(next);
       return;
     }
