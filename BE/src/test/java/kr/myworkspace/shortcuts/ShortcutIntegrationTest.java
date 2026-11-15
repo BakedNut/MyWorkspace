@@ -204,6 +204,84 @@ class ShortcutIntegrationTest {
   }
 
   @Test
+  void busyIconQueueReturnsRetryableStatusWithoutCachingAMiss() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    var entered = new java.util.concurrent.CountDownLatch(2);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    try {
+      for (int i = 0; i < 2; i++)
+        icons.workers.execute(
+            () -> {
+              entered.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+              }
+            });
+      assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      while (icons.workers.getQueue().remainingCapacity() > 0) icons.workers.execute(() -> {});
+      for (var requestBuilder :
+          List.of(get("/api/shortcuts/icons/portal"), head("/api/shortcuts/icons/portal"))) {
+        var request = mvc.perform(requestBuilder.with(trusted)).andReturn();
+        request.getAsyncResult(5000);
+        mvc.perform(asyncDispatch(request))
+            .andExpect(status().isAccepted())
+            .andExpect(header().string("Retry-After", "5"))
+            .andExpect(header().string("Cache-Control", "no-store"));
+      }
+      assertThat(jdbc.queryForObject("select count(*) from shortcut_icon", Integer.class)).isZero();
+      assertThat(icons.pending).isEmpty();
+      verifyNoInteractions(fetcher);
+    } finally {
+      release.countDown();
+      awaitIconWorkers();
+    }
+  }
+
+  @Test
+  void responseTimeoutKeepsSharedCollectionPendingUntilTheIconIsStored() throws Exception {
+    docs.save("shortcuts", board("https://example.com/"));
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    when(fetcher.fetch(URI.create("https://example.com/")))
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              release.await();
+              return new ShortcutIcon("image/png", new byte[] {7});
+            });
+    try {
+      var first = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+      assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      first.getAsyncResult(14_000);
+      mvc.perform(asyncDispatch(first)).andExpect(status().isAccepted());
+      assertThat(icons.pending.values()).hasSize(1).allMatch(task -> !task.isDone());
+      var second = mvc.perform(head("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+      release.countDown();
+      second.getAsyncResult(5000);
+      mvc.perform(asyncDispatch(second)).andExpect(status().isOk());
+      var cached = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+      cached.getAsyncResult(5000);
+      mvc.perform(asyncDispatch(cached))
+          .andExpect(status().isOk())
+          .andExpect(content().bytes(new byte[] {7}));
+      verify(fetcher, times(1)).fetch(URI.create("https://example.com/"));
+    } finally {
+      release.countDown();
+      awaitIconWorkers();
+    }
+  }
+
+  void awaitIconWorkers() throws InterruptedException {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    while ((icons.workers.getActiveCount() > 0 || !icons.workers.getQueue().isEmpty())
+        && System.nanoTime() < deadline) Thread.sleep(10);
+    assertThat(icons.workers.getActiveCount()).isZero();
+    assertThat(icons.workers.getQueue()).isEmpty();
+  }
+
+  @Test
   void passwordSessionsCanAlsoLoadIconsThroughAsyncDispatch() throws Exception {
     docs.save("shortcuts", board("https://example.com/"));
     when(fetcher.fetch(URI.create("https://example.com/")))
@@ -257,7 +335,8 @@ class ShortcutIntegrationTest {
     docs.save("shortcuts", board("https://example.com/"));
     when(fetcher.fetch(URI.create("https://example.com/")))
         .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
-    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS).icon())
+        .isNotNull();
     jdbc.update("update shortcut_icon set checked_at=0");
     when(fetcher.fetch(URI.create("https://example.com/"))).thenReturn(null);
     icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -267,7 +346,8 @@ class ShortcutIntegrationTest {
     assertThat(jdbc.queryForObject("select checked_at from shortcut_icon", Long.class))
         .isPositive();
     assertThat(jdbc.queryForObject("select image_bytes from shortcut_icon", byte[].class)).isNull();
-    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS)).isNull();
+    assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS).icon())
+        .isNull();
     verify(fetcher, times(2)).fetch(URI.create("https://example.com/"));
   }
 

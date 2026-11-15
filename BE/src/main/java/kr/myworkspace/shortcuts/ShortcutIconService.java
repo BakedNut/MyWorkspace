@@ -22,12 +22,13 @@ class ShortcutIconService {
   final JdbcTemplate jdbc;
   final TransactionTemplate transactions;
   final ShortcutIconFetcher fetcher;
-  final ConcurrentHashMap<String, CompletableFuture<ShortcutIcon>> pending =
-      new ConcurrentHashMap<>();
+  final ConcurrentHashMap<String, CompletableFuture<Lookup>> pending = new ConcurrentHashMap<>();
   final ThreadPoolExecutor workers =
       new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(32));
 
   record Cached(ShortcutIcon icon, long checkedAt) {}
+
+  record Lookup(ShortcutIcon icon, boolean pending) {}
 
   ShortcutIconService(
       DocumentStore docs,
@@ -40,7 +41,7 @@ class ShortcutIconService {
     this.fetcher = fetcher;
   }
 
-  CompletableFuture<ShortcutIcon> get(String id, String site) {
+  CompletableFuture<Lookup> get(String id, String site) {
     var link =
         docs.read("shortcuts", ShortcutBoard.class).groups().stream()
             .flatMap(group -> group.links().stream())
@@ -51,9 +52,9 @@ class ShortcutIconService {
     try {
       origin = ShortcutUrl.origin(link.url());
       if (site != null && !origin.equals(ShortcutUrl.origin(site)))
-        return CompletableFuture.completedFuture(null);
+        return CompletableFuture.completedFuture(new Lookup(null, false));
     } catch (IllegalArgumentException invalid) {
-      return CompletableFuture.completedFuture(null);
+      return CompletableFuture.completedFuture(new Lookup(null, false));
     }
     String key;
     try {
@@ -81,13 +82,10 @@ class ShortcutIconService {
             ? TimeUnit.DAYS.toMillis(7)
             : TimeUnit.HOURS.toMillis(6);
     if (cached != null && System.currentTimeMillis() - cached.checkedAt() < ttl)
-      return CompletableFuture.completedFuture(cached.icon());
-    var task = new CompletableFuture<ShortcutIcon>();
+      return CompletableFuture.completedFuture(new Lookup(cached.icon(), false));
+    var task = new CompletableFuture<Lookup>();
     var existing = pending.putIfAbsent(key, task);
-    if (existing != null)
-      return cached != null && cached.icon() != null
-          ? CompletableFuture.completedFuture(cached.icon())
-          : existing;
+    if (existing != null) return response(existing, cached);
     try {
       workers.execute(
           () -> {
@@ -101,17 +99,21 @@ class ShortcutIconService {
                   .warn("바로가기 아이콘 처리 실패: {}", error.getClass().getSimpleName());
             } finally {
               pending.remove(key, task);
-              task.complete(icon);
+              task.complete(new Lookup(icon, false));
             }
           });
     } catch (RejectedExecutionException full) {
       pending.remove(key, task);
-      task.complete(null);
+      task.complete(new Lookup(null, true));
     }
-    task.completeOnTimeout(null, 12, TimeUnit.SECONDS);
-    return cached != null && cached.icon() != null
-        ? CompletableFuture.completedFuture(cached.icon())
-        : task;
+    return response(task, cached);
+  }
+
+  CompletableFuture<Lookup> response(CompletableFuture<Lookup> task, Cached cached) {
+    if (cached != null && cached.icon() != null)
+      return CompletableFuture.completedFuture(new Lookup(cached.icon(), false));
+    // A response deadline must not complete the shared background collection task.
+    return task.copy().completeOnTimeout(new Lookup(null, true), 12, TimeUnit.SECONDS);
   }
 
   void store(String key, ShortcutIcon icon) {
@@ -138,7 +140,7 @@ class ShortcutIconService {
   @jakarta.annotation.PreDestroy
   void close() {
     workers.shutdownNow();
-    pending.values().forEach(task -> task.complete(null));
+    pending.values().forEach(task -> task.complete(new Lookup(null, true)));
     pending.clear();
   }
 }

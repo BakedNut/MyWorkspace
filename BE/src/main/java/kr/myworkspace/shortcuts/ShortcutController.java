@@ -36,7 +36,13 @@ class ShortcutController {
     return icons
         .get(id, site)
         .thenApply(
-            icon -> {
+            result -> {
+              if (result.pending())
+                return ResponseEntity.accepted()
+                    .cacheControl(CacheControl.noStore())
+                    .header("Retry-After", "5")
+                    .build();
+              var icon = result.icon();
               if (icon == null)
                 return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
               return ResponseEntity.ok()
