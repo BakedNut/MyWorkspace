@@ -276,6 +276,83 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertEqual(receipt["commit"], "commit")
         self.assertEqual(receipt["backendSha256"], hashlib.sha256(original).hexdigest())
 
+    def test_frontend_rebuild_during_deployment_preserves_the_initial_snapshot(self):
+        for timing in ("backup", "upload"):
+            with self.subTest(timing=timing):
+                dist = self.root / "FE/dist"
+                (dist / "images").mkdir(exist_ok=True)
+                (dist / "images/icon.png").write_bytes(b"original image")
+                (dist / "removed.txt").write_text("original file")
+                (dist / "build-info.json").write_text('{"commit":"commit","dirty":false}')
+                (dist / "new.txt").unlink(missing_ok=True)
+                original = {path.relative_to(dist).as_posix(): path.read_bytes()
+                            for path in dist.rglob("*") if path.is_file()}
+                uploaded = {}
+                sources = []
+                rebuilt = False
+
+                def rebuild():
+                    nonlocal rebuilt
+                    rebuilt = True
+                    (dist / "build-info.json").write_text('{"commit":"other","dirty":true}')
+                    (dist / "images/icon.png").write_bytes(b"rebuilt image")
+                    (dist / "removed.txt").unlink()
+                    (dist / "new.txt").write_text("new file")
+
+                def backup(stamp):
+                    if timing == "backup":
+                        rebuild()
+                    return Path("/tmp/preview.sql.gz")
+
+                def push(args, **options):
+                    source = Path(args[3])
+                    uploaded[args[4]] = source.read_bytes()
+                    if not str(source).endswith(".jar"):
+                        sources.append(source)
+                        if timing == "upload" and not rebuilt:
+                            rebuild()
+
+                def run(ct, args, data=None):
+                    if args[0] == "sha256sum":
+                        return hashlib.sha256(uploaded[args[1]]).hexdigest() + " file"
+                    return self.server_run(ct, args, data)
+
+                self.backup.side_effect = backup
+                self.push.side_effect = push
+                self.run.side_effect = run
+                preview.deploy(self.root)
+                receipt = json.loads(self.private.call_args.args[2])
+                prefix = receipt["frontend"] + "/"
+                actual = {path.removeprefix(prefix): value for path, value in uploaded.items()
+                          if path.startswith(prefix)}
+                self.assertEqual(actual, original)
+                self.assertEqual(receipt["commit"], "commit")
+                self.assertFalse(receipt["frontendDirty"])
+                self.assertTrue(rebuilt)
+                self.assertTrue(sources)
+                self.assertTrue(all(not source.exists() for source in sources))
+
+    def test_corrupt_frontend_upload_aborts_before_activation_and_cleans_snapshot(self):
+        sources = []
+
+        def push(args, **options):
+            if not args[3].endswith(".jar"):
+                sources.append(Path(args[3]))
+
+        def run(ct, args, data=None):
+            if args[0] == "sha256sum" and not args[1].endswith(".jar"):
+                return hashlib.sha256(b"corrupt upload").hexdigest() + " file"
+            return self.server_run(ct, args, data)
+
+        self.push.side_effect = push
+        self.run.side_effect = run
+        with self.assertRaisesRegex(RuntimeError, "frontend checksum"):
+            preview.deploy(self.root)
+        self.private.assert_not_called()
+        self.assertFalse(any(call.args[1][0] == "ln" for call in self.run.call_args_list))
+        self.assertTrue(sources)
+        self.assertTrue(all(not source.exists() for source in sources))
+
     def test_missing_build_is_rejected_before_server_operations(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):

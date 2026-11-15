@@ -8,7 +8,9 @@ import fcntl
 import hashlib
 import json
 import io
+import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import zipfile
@@ -203,17 +205,23 @@ def deploy(root=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError("Another preview deployment is already running") from None
-        _deploy(root)
+        with tempfile.TemporaryDirectory(prefix="myworkspace-preview-") as directory:
+            _deploy(root, Path(directory) / "frontend")
 
 
-def _deploy(root=None):
+def _deploy(root, frontend_snapshot):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
     jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
     dist = root / "FE/dist"
     if not jar.is_file() or not (dist / "index.html").is_file():
         raise ValueError("Build BE and FE before updating the preview")
-    expected_frontend = frontend_manifest(dist)
+    # Keep build metadata and every uploaded file together across local rebuilds.
+    shutil.copytree(dist, frontend_snapshot)
+    dist = frontend_snapshot
     build = build_metadata(root, jar, dist)
+    expected_frontend = frontend_manifest(dist)
+    frontend_hashes = {path.relative_to(dist): hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in dist.rglob("*") if path.is_file()}
     previous_jar = run(200, ["readlink", JAR]).strip()
     previous_frontend = run(200, ["readlink", FRONTEND]).strip()
     if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
@@ -236,7 +244,7 @@ def _deploy(root=None):
             run(200, ["install", "-d", "-m", "755", destination])
         else:
             subprocess.run(["pct", "push", "200", str(path), destination, "--perms", "0644"], capture_output=True, check=True)
-            if run(200, ["sha256sum", destination]).split()[0] != hashlib.sha256(path.read_bytes()).hexdigest():
+            if run(200, ["sha256sum", destination]).split()[0] != frontend_hashes[path.relative_to(dist)]:
                 raise RuntimeError("Uploaded frontend checksum mismatch")
     try:
         replace(target, JAR, stamp)
