@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { CalendarDays, Home, LogOut, Menu, Power, Server, Settings, X } from "lucide-react";
+import { CalendarDays, Link2, Home, LogOut, Menu, Power, Server, Settings, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import { useSiteName } from "@/lib/site";
 const NAV = [
   { to: "/", label: "메인", icon: Home },
   { to: "/calendar", label: "캘린더", icon: CalendarDays },
+  { to: "/shortcuts", label: "바로가기", icon: Link2 },
   { to: "/server", label: "서버 대시보드", icon: Server },
   { to: "/wol", label: "WOL", icon: Power },
 ] as const;

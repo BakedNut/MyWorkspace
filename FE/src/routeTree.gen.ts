@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ServerRouteImport } from './routes/server'
+import { Route as ShortcutsRouteImport } from './routes/shortcuts'
 import { Route as WolRouteImport } from './routes/wol'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,11 @@ const ServerRoute = ServerRouteImport.update({
   path: '/server',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShortcutsRoute = ShortcutsRouteImport.update({
+  id: '/shortcuts',
+  path: '/shortcuts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WolRoute = WolRouteImport.update({
   id: '/wol',
   path: '/wol',
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/calendar': typeof CalendarRoute
   '/login': typeof LoginRoute
   '/server': typeof ServerRoute
+  '/shortcuts': typeof ShortcutsRoute
   '/wol': typeof WolRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/calendar': typeof CalendarRoute
   '/login': typeof LoginRoute
   '/server': typeof ServerRoute
+  '/shortcuts': typeof ShortcutsRoute
   '/wol': typeof WolRoute
 }
 export interface FileRoutesById {
@@ -61,14 +69,22 @@ export interface FileRoutesById {
   '/calendar': typeof CalendarRoute
   '/login': typeof LoginRoute
   '/server': typeof ServerRoute
+  '/shortcuts': typeof ShortcutsRoute
   '/wol': typeof WolRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/calendar' | '/login' | '/server' | '/wol'
+  fullPaths: '/' | '/calendar' | '/login' | '/server' | '/shortcuts' | '/wol'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/calendar' | '/login' | '/server' | '/wol'
-  id: '__root__' | '/' | '/calendar' | '/login' | '/server' | '/wol'
+  to: '/' | '/calendar' | '/login' | '/server' | '/shortcuts' | '/wol'
+  id:
+    | '__root__'
+    | '/'
+    | '/calendar'
+    | '/login'
+    | '/server'
+    | '/shortcuts'
+    | '/wol'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -76,6 +92,7 @@ export interface RootRouteChildren {
   CalendarRoute: typeof CalendarRoute
   LoginRoute: typeof LoginRoute
   ServerRoute: typeof ServerRoute
+  ShortcutsRoute: typeof ShortcutsRoute
   WolRoute: typeof WolRoute
 }
 
@@ -109,6 +126,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ServerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shortcuts': {
+      id: '/shortcuts'
+      path: '/shortcuts'
+      fullPath: '/shortcuts'
+      preLoaderRoute: typeof ShortcutsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/wol': {
       id: '/wol'
       path: '/wol'
@@ -124,6 +148,7 @@ const rootRouteChildren: RootRouteChildren = {
   CalendarRoute: CalendarRoute,
   LoginRoute: LoginRoute,
   ServerRoute: ServerRoute,
+  ShortcutsRoute: ShortcutsRoute,
   WolRoute: WolRoute,
 }
 export const routeTree = rootRouteImport
