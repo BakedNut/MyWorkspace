@@ -61,6 +61,7 @@ class ShortcutService {
                 })
             .toList();
     ApiException.require(linkIds.size() <= 200, "바로가기는 최대 200개까지 저장할 수 있습니다.");
+    if (groups.equals(current.groups())) return current;
     var saved = new ShortcutBoard(current.revision() + 1, groups);
     docs.write(document, saved);
     return saved;
