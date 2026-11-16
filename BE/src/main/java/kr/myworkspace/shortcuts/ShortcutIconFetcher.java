@@ -79,6 +79,12 @@ class ShortcutIconFetcher {
 
   record Download(URI uri, byte[] bytes) {}
 
+  static final class Unavailable extends RuntimeException {
+    Unavailable(Throwable cause) {
+      super("Icon fetch temporarily unavailable", cause);
+    }
+  }
+
   ShortcutIconFetcher(@Value("${app.shortcut-icon-networks}") String networks) {
     deadlines.setRemoveOnCancelPolicy(true);
     privateNetworks =
@@ -228,22 +234,38 @@ class ShortcutIconFetcher {
             .disableContentCompression()
             .build()) {
       Set<URI> candidates = new LinkedHashSet<>();
-      var page = read(client, resolver, original, original, true, deadline);
+      Unavailable failure = null;
+      Download page = null;
+      try {
+        page = read(client, resolver, original, original, true, deadline);
+      } catch (Unavailable error) {
+        failure = error;
+      }
       if (page != null) {
         candidates.addAll(candidates(page.uri(), page.bytes()));
         candidates.add(page.uri().resolve("/favicon.ico"));
       }
       candidates.add(original.resolve("/favicon.ico"));
       for (URI uri : candidates) {
-        if (System.nanoTime() >= deadline) break;
+        if (System.nanoTime() >= deadline) {
+          failure = new Unavailable(new IOException("Icon fetch deadline"));
+          break;
+        }
         if (defaultIcon(uri)) continue;
-        var result = read(client, resolver, original, uri, false, deadline);
+        Download result;
+        try {
+          result = read(client, resolver, original, uri, false, deadline);
+        } catch (Unavailable error) {
+          failure = error;
+          continue;
+        }
         if (result == null || defaultIcon(result.uri())) continue;
         var icon = ShortcutIconImage.decode(result.bytes());
         if (icon != null) return icon;
       }
-    } catch (Exception ignored) {
-      // An unavailable icon must not affect bookmark loading or saving.
+      if (failure != null) throw failure;
+    } catch (Exception error) {
+      throw error instanceof Unavailable unavailable ? unavailable : new Unavailable(error);
     }
     return null;
   }
@@ -260,10 +282,11 @@ class ShortcutIconFetcher {
       for (int redirects = 0; redirects <= 3; redirects++) {
         uri = ShortcutUrl.canonical(uri);
         long remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-        if (remaining <= 0 || !targetAllowed(original, uri)) return null;
+        if (remaining <= 0) throw new IOException("Icon request timed out");
+        if (!targetAllowed(original, uri)) return null;
         resolver.resolve(uri.getHost());
         remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-        if (remaining <= 0) return null;
+        if (remaining <= 0) throw new IOException("Icon request timed out");
         var request = new HttpGet(uri);
         request.setConfig(
             RequestConfig.custom()
@@ -286,7 +309,10 @@ class ShortcutIconFetcher {
             request.cancel();
             continue;
           }
-          if (response.getCode() != 200 || response.getEntity() == null) {
+          int status = response.getCode();
+          if (status >= 500 || status == 408 || status == 425 || status == 429)
+            throw new IOException("Retryable icon HTTP status " + status);
+          if (status != 200 || response.getEntity() == null) {
             request.cancel();
             return null;
           }
@@ -310,8 +336,8 @@ class ShortcutIconFetcher {
           if (response != null) response.close();
         }
       }
-    } catch (Exception ignored) {
-      return null;
+    } catch (Exception error) {
+      throw new Unavailable(error);
     }
     return null;
   }

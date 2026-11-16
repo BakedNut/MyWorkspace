@@ -90,16 +90,19 @@ class ShortcutIconService {
       workers.execute(
           () -> {
             ShortcutIcon icon = null;
+            boolean retryable = false;
             try {
               icon = fetcher.fetch(origin);
               ShortcutIcon result = icon;
               transactions.executeWithoutResult(tx -> store(key, result));
             } catch (RuntimeException error) {
+              icon = cached == null ? null : cached.icon();
+              retryable = icon == null;
               org.slf4j.LoggerFactory.getLogger(getClass())
                   .warn("바로가기 아이콘 처리 실패: {}", error.getClass().getSimpleName());
             } finally {
               pending.remove(key, task);
-              task.complete(new Lookup(icon, false));
+              task.complete(new Lookup(icon, retryable));
             }
           });
     } catch (RejectedExecutionException full) {

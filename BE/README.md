@@ -47,7 +47,7 @@ Java 21 · Spring Boot · Spring Security · JPA · JdbcTemplate · MySQL을 사
 
 최대 분류 50개·전체 링크 200개를 지원합니다. 분류 이름은 80자, 링크 이름은 120자, URL은 2,048자까지이며 HTTP·HTTPS URL을 검증합니다. 이름의 앞뒤 공백을 제거하고 공백만 있는 이름·제어 문자를 거부합니다. 문서 잠금 안에서 revision을 확인하고 정규화한 목록이 변경된 경우에 증가시킵니다. 변경 없는 저장은 현재 revision을 반환하며 이전 revision의 요청은 409로 거부합니다.
 
-V8은 app_document에 초기 바로가기 문서를 추가하고, V9는 shortcut_icon 캐시 테이블을 만듭니다. 캐시는 출처별로 공유하며 정상 아이콘은 7일, 아이콘 없음은 6시간 보관합니다. 외부 수집은 작업자 2개·대기열 32개로 제한합니다. 수집 대기·대기열 포화는 202와 Retry-After, 수집 완료 후 아이콘 없음은 204, 정상 이미지는 200을 반환합니다. 아직 수집 결과가 없으면 공유 작업을 유지하며 즉시 202를 반환합니다.
+V8은 app_document에 초기 바로가기 문서를 추가하고, V9는 shortcut_icon 캐시 테이블을 만듭니다. 캐시는 출처별로 공유하며 정상 아이콘은 7일, 아이콘 없음은 6시간 보관합니다. 외부 수집은 작업자 2개·대기열 32개로 제한합니다. 수집 대기·대기열 포화는 202와 Retry-After, 수집 완료 후 아이콘 없음은 204, 정상 이미지는 200을 반환합니다. 일시적인 HTTP·DNS·통신 장애는 기존 이미지와 확인 시각을 보존하며, 저장된 이미지가 없으면 202로 재시도를 안내합니다. 아이콘 부재가 확인된 경우에만 미발견 결과를 캐시합니다. 아직 수집 결과가 없으면 공유 작업을 유지하며 즉시 202를 반환합니다.
 
 아이콘 다운로드에는 DNS 주소 고정, 대상 주소·포트·리디렉션 검사와 8초 수집 제한을 적용합니다. 이미지는 검증·정화 후 저장합니다. 사설망 아이콘 접근 범위는 SHORTCUT_ICON_NETWORKS로 지정하며 실제 환경에 맞게 설정합니다. 자세한 책임 분리는 구조 안내에 있습니다. [백엔드 구조](docs/architecture.md)
 
@@ -74,4 +74,4 @@ GET /api/health/deployment
 
 ## 테스트 배포 시작 전 DB 검사
 
-PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 배포 실패 시 기존 사전 검사 drop-in의 존재 여부와 내용을 복원하고 단위 설정을 다시 읽은 뒤 이전 실행·중지 상태를 복구합니다.
+PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 배포 실패 시 기존 database-check.conf의 존재 여부와 내용을 복원합니다. 별도의 database-safety.conf는 최신 검사 JAR를 계속 참조하며 롤백 재시작에도 적용합니다. 검사 설치·단위 재로드·DB 검사가 실패하면 백엔드를 중지하고 복구 실패를 보고합니다. 안전 검사에서 참조하는 JAR는 보존해야 합니다. 매 시작 전에 실제 실행 JAR와 검사 JAR의 패키징된 properties·YAML 설정을 비교합니다. git.properties를 제외한 설정이 다르면 자동 재시작을 차단하므로 해당 릴리스의 설정을 확인해야 합니다. 사전 검사는 기본 JDBC 데이터소스와 연결에 영향을 주지 않는 Hikari 풀 조정만 지원합니다. Hikari 연결 URL·자격 증명·데이터소스 속성, 별도 데이터소스 구현·JNDI, Flyway JDBC 속성·초기화 SQL 재정의는 연결 전에 거부합니다.

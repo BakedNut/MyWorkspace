@@ -26,7 +26,22 @@ LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
 DATABASE_GUARD = "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf"
+DATABASE_SAFETY_GUARD = "/etc/systemd/system/myworkspace-preview.service.d/database-safety.conf"
 BACKUP_DIRECTORY = Path("/root/.local/state/myworkspace/preview-backups")
+
+
+DATABASE_CONFIG_CHECK = """import sys,zipfile
+
+def configuration(path):
+    with zipfile.ZipFile(path) as archive:
+        return {name:archive.read(name) for name in archive.namelist()
+                if name.startswith('BOOT-INF/classes/')
+                and name.endswith(('.properties','.yaml','.yml'))
+                and name!='BOOT-INF/classes/git.properties'}
+
+if configuration(sys.argv[1])!=configuration(sys.argv[2]):
+    raise SystemExit('Preview checker and runtime packaged configuration differ')
+"""
 
 
 def ready(port=8081):
@@ -230,13 +245,16 @@ def replace(target, link, stamp):
     run(200, ["mv", "-Tf", temporary, link])
 
 
-def restore(previous_jar, previous_frontend, stamp, previous_guard, backend_active=True, web_active=True):
+def restore(previous_jar, previous_frontend, stamp, previous_guard, checker_jar, backend_active=True, web_active=True):
     failures = []
+    backend_safe = True
     for target, path in ((previous_jar, JAR), (previous_frontend, FRONTEND)):
         try:
             replace(target, path, stamp + "-restore")
         except Exception as error:
             failures.append(f"{path}: {type(error).__name__}")
+            if path == JAR:
+                backend_safe = False
     try:
         if previous_guard is None:
             run(200, ["rm", "-f", DATABASE_GUARD])
@@ -244,11 +262,15 @@ def restore(previous_jar, previous_frontend, stamp, previous_guard, backend_acti
             private_file(200, DATABASE_GUARD, previous_guard, 0o600)
     except Exception as error:
         failures.append(f"database guard: {type(error).__name__}")
+        backend_safe = False
     try:
-        run(200, ["systemctl", "daemon-reload"])
+        # Keep the restored release configuration and enforce the current safety check too.
+        configure_database_guard(checker_jar)
     except Exception as error:
-        failures.append(f"daemon-reload: {type(error).__name__}")
-    services = [("myworkspace-preview", "restart" if backend_active else "stop")]
+        failures.append(f"database safety guard: {type(error).__name__}")
+        backend_safe = False
+    restart_backend = backend_active and backend_safe
+    services = [("myworkspace-preview", "restart" if restart_backend else "stop")]
     if not web_active:
         services.append(("myworkspace-preview-web", "stop"))
     for service, action in services:
@@ -256,8 +278,14 @@ def restore(previous_jar, previous_frontend, stamp, previous_guard, backend_acti
             run(200, ["systemctl", action, service])
         except Exception as error:
             failures.append(f"{service} {action}: {type(error).__name__}")
-    ports = [8081] if backend_active else []
-    if backend_active and web_active:
+            if service == "myworkspace-preview" and action == "restart":
+                restart_backend = False
+                try:
+                    run(200, ["systemctl", "stop", service])
+                except Exception as stop_error:
+                    failures.append(f"{service} stop: {type(stop_error).__name__}")
+    ports = [8081] if restart_backend else []
+    if restart_backend and web_active:
         ports.append(8088)
     for port in ports:
         try:
@@ -299,11 +327,13 @@ def configure_database_guard(jar):
     run(200, ["systemctl", "daemon-reload"])
     program = Path(__file__).with_name("preview_key.py").read_text()
     arguments = json.loads(run(200, ["python3", "-c", program, "--service-arguments"]))
-    command = java_command(jar, arguments, "kr.myworkspace.common.database.PreviewDatabaseCheck")
+    check = java_command(jar, arguments, "kr.myworkspace.common.database.PreviewDatabaseCheck")
+    runtime_jar = arguments[arguments.index("-jar") + 1]
+    commands = [["/usr/bin/python3", "-c", DATABASE_CONFIG_CHECK, jar, runtime_jar], check]
     # Preserve argument boundaries and literal unit specifiers in the generated unit.
-    encoded = " ".join(json.dumps(arg.replace("%", "%%"), ensure_ascii=False) for arg in command)
-    private_file(200, DATABASE_GUARD,
-                 "[Service]\nExecStartPre=" + encoded + "\n", 0o600)
+    encoded = "\n".join("ExecStartPre=" + " ".join(json.dumps(arg.replace("%", "%%"), ensure_ascii=False)
+                        for arg in command) for command in commands)
+    private_file(200, DATABASE_SAFETY_GUARD, "[Service]\n" + encoded + "\n", 0o600)
     run(200, ["systemctl", "daemon-reload"])
 
 
@@ -367,7 +397,7 @@ def _deploy(root, frontend_snapshot):
         try:
             if handles_signals:
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            failures = restore(previous_jar, previous_frontend, stamp, previous_guard, backend_active, web_active)
+            failures = restore(previous_jar, previous_frontend, stamp, previous_guard, target, backend_active, web_active)
         finally:
             if handles_signals:
                 signal.signal(signal.SIGTERM, previous_handler)
