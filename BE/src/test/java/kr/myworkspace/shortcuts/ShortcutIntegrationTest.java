@@ -179,6 +179,7 @@ class ShortcutIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(content().contentType("image/png"))
         .andExpect(content().bytes(bytes))
+        .andExpect(header().string("Cache-Control", "max-age=86400, private"))
         .andExpect(
             header()
                 .string(

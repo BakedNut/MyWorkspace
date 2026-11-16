@@ -10,7 +10,7 @@
 | 테스트 | LXC 200의 테스트 웹 8088 → Spring Boot 8081 | myworkspace-preview-web, myworkspace-preview | myworkspace_preview |
 | HTTPS 입구 | LXC 201 NPM → LXC 200 Nginx | 기존 NPM 설정 | 해당 환경의 DB |
 
-Spring Boot는 loopback에서 수신합니다. 운영 Nginx는 React 정적 파일을 제공하고 API를 백엔드로 전달합니다. React 경로 직접 접속은 index.html로 연결합니다. HTTPS와 외부 접근 허용 목록은 NPM에서 관리합니다. 신뢰 프록시와 자동 입장 조건은 운영 안내에서 설명합니다. [접속 경로](backend-operations.md#접속-경로와-자동-입장)
+Spring Boot는 loopback에서 수신합니다. 운영 Nginx는 React 정적 파일을 제공하고 API를 백엔드로 전달합니다. React 경로 직접 접속은 index.html로 연결합니다. API의 Cache-Control은 백엔드 응답 값을 전달합니다. 정상 아이콘은 private·1일 캐시를 사용하고 수집 대기·아이콘 없음은 no-store를 사용합니다. 화면 정적 파일은 no-store를 유지합니다. HTTPS와 외부 접근 허용 목록은 NPM에서 관리합니다. 신뢰 프록시와 자동 입장 조건은 운영 안내에서 설명합니다. [접속 경로](backend-operations.md#접속-경로와-자동-입장)
 
 실제 환경 파일·비밀번호·연동 토큰과 DB·암호화 키 백업은 비공개로 관리합니다.
 
