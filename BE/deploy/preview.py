@@ -36,6 +36,24 @@ def ready(port=8081):
     return False
 
 
+def verify_identity():
+    responses = []
+    for port in (8081, 8088):
+        raw = run(200, ["curl", "--fail", "--silent", "--max-time", "3",
+                        f"http://127.0.0.1:{port}/api/health/deployment"])
+        try:
+            value = json.loads(raw)
+        except ValueError as error:
+            raise RuntimeError("Invalid preview backend identity response") from error
+        if (not isinstance(value, dict) or not isinstance(value.get("instance"), str)
+                or not value["instance"] or value.get("previewDatabase") is not True):
+            raise RuntimeError("Preview backend identity or database mismatch")
+        responses.append(value)
+    if responses[0]["instance"] != responses[1]["instance"]:
+        raise RuntimeError("Preview backend identity mismatch")
+    return responses[0]
+
+
 class FrontendAssets(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -255,16 +273,18 @@ def _deploy(root, frontend_snapshot):
         run(200, ["systemctl", "restart", "myworkspace-preview"])
         if not ready():
             raise RuntimeError("Preview backend did not become ready")
+        verify_identity()
         replace(frontend, FRONTEND, stamp)
         if not ready(8088):
             raise RuntimeError("Preview web endpoint did not become ready")
+        identity = verify_identity()
         verify_frontend(expected_frontend)
     except BaseException as error:
         failures = restore(previous_jar, previous_frontend, stamp)
         if failures:
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise
-    receipt = dict(**build, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview")
+    receipt = dict(**build, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview", backendInstance=identity["instance"])
     print("Preview deployed", commit, "dirty=" + str(build["backendDirty"] or build["frontendDirty"]).lower())
     try:
         private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
