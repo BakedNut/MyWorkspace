@@ -471,17 +471,21 @@ class PreviewDeploymentTest(unittest.TestCase):
 class PreviewDatabaseGuardTest(unittest.TestCase):
     def test_installs_prestart_check_from_the_new_jar_before_reload(self):
         jar = "/opt/myworkspace-preview/releases/new.jar"
-        with patch.object(preview, "private_file") as write, patch.object(preview, "run") as run:
+        with patch.object(preview, "private_file") as write, patch.object(preview, "run", side_effect=["", json.dumps(["/usr/bin/java", "-Dspring.flyway.url=jdbc:h2:mem:myworkspace", "-jar", "/old.jar", "--spring.profiles.active=preview", "--spring.flyway.url=jdbc:h2:mem:myworkspace"]), ""]) as run:
             preview.configure_database_guard(jar)
             ct, path, content, mode = write.call_args.args
             self.assertEqual(ct, 200)
             self.assertIn("myworkspace-preview.service.d/", path)
-            self.assertIn("ExecStartPre=/usr/bin/java", content)
+            self.assertIn('ExecStartPre="/usr/bin/java"', content)
             self.assertIn("PreviewDatabaseCheck", content)
             self.assertIn(jar, content)
             self.assertNotIn("current.jar", content)
-            self.assertEqual(mode, 0o644)
-            run.assert_called_once_with(200, ["systemctl", "daemon-reload"])
+            self.assertEqual(mode, 0o600)
+            self.assertIn("-Dspring.flyway.url=jdbc:h2:mem:myworkspace", content)
+            self.assertIn("--spring.flyway.url=jdbc:h2:mem:myworkspace", content)
+            self.assertIn("--spring.profiles.active=preview", content)
+            self.assertEqual(run.call_args_list[0].args[1], ["systemctl", "daemon-reload"])
+            self.assertEqual(run.call_args_list[-1].args[1], ["systemctl", "daemon-reload"])
 
 
 class PreviewReadinessTest(unittest.TestCase):

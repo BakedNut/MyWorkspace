@@ -17,6 +17,7 @@ import time
 import threading
 import zipfile
 from initialize import run, private_file
+from preview_key import java_command
 
 
 WEB_URL = "http://127.0.0.1:8088"
@@ -277,12 +278,15 @@ def deploy(root=None):
 
 
 def configure_database_guard(jar):
-    # Keep the new checker independent of current.jar so rollback also runs it.
-    command = ("/usr/bin/java -Xms16m -Xmx64m -XX:MaxMetaspaceSize=96m "
-               "-Dloader.main=kr.myworkspace.common.database.PreviewDatabaseCheck "
-               f"-cp {jar} org.springframework.boot.loader.launch.PropertiesLauncher")
+    # Read the loaded command after applying pending unit changes.
+    run(200, ["systemctl", "daemon-reload"])
+    program = Path(__file__).with_name("preview_key.py").read_text()
+    arguments = json.loads(run(200, ["python3", "-c", program, "--service-arguments"]))
+    command = java_command(jar, arguments, "kr.myworkspace.common.database.PreviewDatabaseCheck")
+    # Preserve argument boundaries and literal unit specifiers in the generated unit.
+    encoded = " ".join(json.dumps(arg.replace("%", "%%"), ensure_ascii=False) for arg in command)
     private_file(200, "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf",
-                 "[Service]\nExecStartPre=" + command + "\n", 0o644)
+                 "[Service]\nExecStartPre=" + encoded + "\n", 0o600)
     run(200, ["systemctl", "daemon-reload"])
 
 

@@ -76,6 +76,22 @@ class PreviewDatabaseCheckTest {
   }
 
   @Test
+  void standaloneBootstrapRejectsFlywayUrlOverrideBeforeMigrations() {
+    assertThatThrownBy(
+            () ->
+                PreviewDatabaseCheck.main(
+                    new String[] {
+                      "--spring.datasource.url=" + url("myworkspace_preview"),
+                      "--spring.datasource.username=sa",
+                      "--spring.datasource.password=",
+                      "--spring.flyway.url=" + url("myworkspace"),
+                      "--spring.flyway.user=sa",
+                      "--spring.flyway.password="
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void standaloneBootstrapRejectsProductionBeforeCreatingMigrationTables() {
     assertThatThrownBy(
             () ->
