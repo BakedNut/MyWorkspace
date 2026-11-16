@@ -37,6 +37,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.mock("subprocess.check_output", return_value="commit")
         self.private = self.mock("private_file")
         self.ready = self.mock("ready", return_value=True)
+        self.guard = self.mock("configure_database_guard")
         self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
     def frontend_build(self, commit="commit", dirty=False):
@@ -142,6 +143,8 @@ class PreviewDeploymentTest(unittest.TestCase):
             self.run.assert_any_call(200, ["systemctl", "is-active", "--quiet", service])
         self.assertEqual([call.args for call in self.ready.call_args_list], [(), (8088,)])
         self.private.assert_called_once()
+        self.guard.assert_called_once()
+        self.assertNotIn("current.jar", self.guard.call_args.args[0])
 
     def test_server_receipt_failure_reports_active_release_and_still_writes_local_receipt(self):
         self.private.side_effect = OSError("disk full")
@@ -413,6 +416,22 @@ class PreviewDeploymentTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 preview.deploy(directory)
             self.run.assert_not_called()
+
+
+class PreviewDatabaseGuardTest(unittest.TestCase):
+    def test_installs_prestart_check_from_the_new_jar_before_reload(self):
+        jar = "/opt/myworkspace-preview/releases/new.jar"
+        with patch.object(preview, "private_file") as write, patch.object(preview, "run") as run:
+            preview.configure_database_guard(jar)
+            ct, path, content, mode = write.call_args.args
+            self.assertEqual(ct, 200)
+            self.assertIn("myworkspace-preview.service.d/", path)
+            self.assertIn("ExecStartPre=/usr/bin/java", content)
+            self.assertIn("PreviewDatabaseCheck", content)
+            self.assertIn(jar, content)
+            self.assertNotIn("current.jar", content)
+            self.assertEqual(mode, 0o644)
+            run.assert_called_once_with(200, ["systemctl", "daemon-reload"])
 
 
 class PreviewReadinessTest(unittest.TestCase):

@@ -232,6 +232,16 @@ def deploy(root=None):
             _deploy(root, Path(directory) / "frontend")
 
 
+def configure_database_guard(jar):
+    # Keep the new checker independent of current.jar so rollback also runs it.
+    command = ("/usr/bin/java -Xms16m -Xmx64m -XX:MaxMetaspaceSize=96m "
+               "-Dloader.main=kr.myworkspace.common.database.PreviewDatabaseCheck "
+               f"-cp {jar} org.springframework.boot.loader.launch.PropertiesLauncher")
+    private_file(200, "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf",
+                 "[Service]\nExecStartPre=" + command + "\n", 0o644)
+    run(200, ["systemctl", "daemon-reload"])
+
+
 def _deploy(root, frontend_snapshot):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
     jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
@@ -269,6 +279,7 @@ def _deploy(root, frontend_snapshot):
             subprocess.run(["pct", "push", "200", str(path), destination, "--perms", "0644"], capture_output=True, check=True)
             if run(200, ["sha256sum", destination]).split()[0] != frontend_hashes[path.relative_to(dist)]:
                 raise RuntimeError("Uploaded frontend checksum mismatch")
+    configure_database_guard(target)
     try:
         replace(target, JAR, stamp)
         run(200, ["systemctl", "restart", "myworkspace-preview"])
