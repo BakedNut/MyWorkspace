@@ -488,6 +488,16 @@ class PreviewDatabaseGuardTest(unittest.TestCase):
             self.assertEqual(run.call_args_list[-1].args[1], ["systemctl", "daemon-reload"])
 
 
+    def test_dynamic_jvm_arguments_abort_before_installing_or_starting(self):
+        for option in ("$JAVA_OPTS", "${JAVA_OPTS}", "@/options.txt"):
+            arguments = ["/usr/bin/java", option, "-jar", "/old.jar"]
+            with self.subTest(option=option), patch.object(preview, "private_file") as write, patch.object(preview, "run", side_effect=["", json.dumps(arguments)]) as run:
+                with self.assertRaisesRegex(RuntimeError, "explicit JVM"):
+                    preview.configure_database_guard("/new.jar")
+                write.assert_not_called()
+                self.assertEqual(run.call_count, 2)
+
+
 class PreviewReadinessTest(unittest.TestCase):
     def test_checks_requested_web_port(self):
         with patch.object(preview, "run", return_value='{"status":"ok"}') as run:

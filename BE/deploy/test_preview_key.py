@@ -93,6 +93,12 @@ class PreviewKeyEnvironmentTest(unittest.TestCase):
         self.assertNotIn("/old.jar", command)
         self.assertIn("-Dloader.main=Checker", command)
 
+    def test_unresolved_jvm_expansion_and_argument_files_are_rejected(self):
+        for option in ("$JAVA_OPTS", "${JAVA_OPTS}", "-Xmx${HEAP}", "@/options.txt"):
+            with self.subTest(option=option):
+                with self.assertRaisesRegex(RuntimeError, "explicit JVM"):
+                    preview_key.java_command("/new.jar", ["/usr/bin/java", option, "-jar", "/old.jar"], "Checker")
+
     def test_running_service_uses_the_applied_process_environment_and_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

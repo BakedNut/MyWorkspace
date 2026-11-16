@@ -29,6 +29,11 @@ def java_command(jar, arguments, entrypoint):
     if not isinstance(arguments, list) or not arguments or not all(isinstance(arg, str) for arg in arguments):
         raise RuntimeError("Invalid preview service arguments")
     jar_index = arguments.index("-jar")
+    for argument in arguments[1:jar_index]:
+        if argument.startswith("@") or ("$" in argument and not argument.startswith("-D")):
+            raise RuntimeError("Preview requires explicit JVM options; unresolved expansions and argument files are unsupported")
+    if jar_index + 1 >= len(arguments) or "$" in arguments[jar_index + 1]:
+        raise RuntimeError("Preview requires an explicit JVM jar argument")
     properties = [arg for arg in arguments[1:jar_index] if arg.startswith("-D")]
     return [arguments[0], "-Xms16m", "-Xmx64m", "-XX:MaxMetaspaceSize=96m", *properties,
             "-Dloader.main=" + entrypoint, "-cp", jar,
