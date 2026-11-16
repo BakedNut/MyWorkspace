@@ -387,6 +387,9 @@ function ShortcutsPage() {
                   : attemptedCreate.current?.groupSelectionVersion
               }
               onClose={() => {
+                if (attemptedCreate.current?.uncertain)
+                  void queryClient.invalidateQueries({ queryKey });
+                attemptedCreate.current = null;
                 setDialog(null);
                 setRequiresRecreation(false);
                 mutation.reset();

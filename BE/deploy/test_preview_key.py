@@ -82,6 +82,17 @@ class PreviewKeyEnvironmentTest(unittest.TestCase):
             self.assertIn("/new.jar", command)
             self.assertNotIn("/old.jar", command)
 
+    def test_java_entrypoint_preserves_property_and_spring_argument_boundaries(self):
+        arguments = ["/usr/bin/java", "-Dspring.config.location=/custom path/config.properties",
+                     "-Dspring.flyway.url=jdbc:fixture", "-jar", "/old.jar",
+                     "--spring.flyway.url=jdbc:override", "--label=space and 100%"]
+        command = preview_key.java_command("/new.jar", arguments, "Checker")
+        self.assertIn("-Dspring.config.location=/custom path/config.properties", command)
+        self.assertIn("-Dspring.flyway.url=jdbc:fixture", command)
+        self.assertEqual(command[-2:], arguments[-2:])
+        self.assertNotIn("/old.jar", command)
+        self.assertIn("-Dloader.main=Checker", command)
+
     def test_running_service_uses_the_applied_process_environment_and_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

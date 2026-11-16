@@ -1,5 +1,6 @@
 """Run in LXC 200 to read a key with the preview service's applied configuration."""
 from pathlib import Path
+import json
 import os
 import re
 import shlex
@@ -14,6 +15,24 @@ PROC = Path("/proc")
 def service_property(name):
     return subprocess.run(["systemctl", "show", SERVICE, "--value", "-p", name],
                           capture_output=True, text=True, check=True).stdout.strip()
+
+
+def configured_arguments():
+    command = service_property("ExecStart")
+    matches = re.findall(r"argv\[\]=(.*?) ; ignore_errors=", command)
+    if len(matches) != 1:
+        raise RuntimeError("Cannot resolve preview service command")
+    return shlex.split(matches[0])
+
+
+def java_command(jar, arguments, entrypoint):
+    if not isinstance(arguments, list) or not arguments or not all(isinstance(arg, str) for arg in arguments):
+        raise RuntimeError("Invalid preview service arguments")
+    jar_index = arguments.index("-jar")
+    properties = [arg for arg in arguments[1:jar_index] if arg.startswith("-D")]
+    return [arguments[0], "-Xms16m", "-Xmx64m", "-XX:MaxMetaspaceSize=96m", *properties,
+            "-Dloader.main=" + entrypoint, "-cp", jar,
+            "org.springframework.boot.loader.launch.PropertiesLauncher", *arguments[jar_index + 2:]]
 
 
 def read_key(jar):
@@ -31,11 +50,7 @@ def read_key(jar):
                        user=identity.st_uid, group=identity.st_gid, extra_groups=[int(g) for g in groups])
         prefix = []
     else:
-        command = service_property("ExecStart")
-        match = re.search(r"argv\[\]=(.*?) ; ignore_errors=", command)
-        if not match:
-            raise RuntimeError("Cannot resolve preview service command")
-        arguments = shlex.split(match.group(1))
+        arguments = configured_arguments()
         prefix = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
                   "-p", "RuntimeMaxSec=30s"]
         for name in ("User", "Group", "WorkingDirectory"):
@@ -56,12 +71,8 @@ def read_key(jar):
             value = " ".join(("-" if optional == "yes" else "") + path.strip()
                              for path, optional in entries)
             prefix.extend(["-p", "EnvironmentFile=" + value])
-    jar_index = arguments.index("-jar")
-    properties = [arg for arg in arguments[1:jar_index] if arg.startswith("-D")]
-    command = prefix + [arguments[0], "-Xms16m", "-Xmx64m", "-XX:MaxMetaspaceSize=96m", *properties,
-                        "-Dloader.main=kr.myworkspace.common.database.PreviewKeyBackup",
-                        "-cp", jar, "org.springframework.boot.loader.launch.PropertiesLauncher",
-                        *arguments[jar_index + 2:]]
+    command = prefix + java_command(jar, arguments,
+                                    "kr.myworkspace.common.database.PreviewKeyBackup")
     result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=40, **options)
     lines = [line.removeprefix("PREVIEW_BACKUP_KEY=") for line in result.stdout.splitlines()
              if line.startswith("PREVIEW_BACKUP_KEY=")]
@@ -72,6 +83,9 @@ def read_key(jar):
 
 if __name__ == "__main__":
     try:
-        print(read_key(sys.argv[1]))
+        if sys.argv[1] == "--service-arguments":
+            print(json.dumps(configured_arguments()))
+        else:
+            print(read_key(sys.argv[1]))
     except Exception:
         raise SystemExit("Cannot read the preview service encryption key") from None
