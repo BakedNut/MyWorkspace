@@ -166,6 +166,8 @@ def build_metadata(root, jar, dist):
         if backend_dirty not in ("true", "false") or type(frontend["dirty"]) is not bool:
             raise ValueError("Invalid build flags")
         frontend_commit = frontend["commit"]
+        if frontend.get("apiMode") != "rest":
+            raise ValueError("Preview deployment requires a real API frontend build")
         files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
         if frontend["files"] != files:
@@ -175,7 +177,7 @@ def build_metadata(root, jar, dist):
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     if backend_commit != commit or frontend_commit != commit:
         raise ValueError("Build commit does not match current checkout; rebuild BE and FE")
-    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"],
+    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"], frontendApiMode=frontend["apiMode"],
                 backendSha256=hashlib.sha256(jar_bytes).hexdigest())
 
 

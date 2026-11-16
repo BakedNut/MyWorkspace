@@ -40,11 +40,11 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.guard = self.mock("configure_database_guard")
         self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
-    def frontend_build(self, commit="commit", dirty=False):
+    def frontend_build(self, commit="commit", dirty=False, api_mode="rest"):
         dist = self.root / "FE/dist"
         files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
-        (dist / "build-info.json").write_text(json.dumps(dict(commit=commit, dirty=dirty, files=files)))
+        (dist / "build-info.json").write_text(json.dumps(dict(commit=commit, dirty=dirty, apiMode=api_mode, files=files)))
 
     def mock(self, name, **options):
         patcher = patch("preview." + name, **options)
@@ -285,6 +285,16 @@ class PreviewDeploymentTest(unittest.TestCase):
                 self.run.assert_not_called()
                 self.backup.assert_not_called()
                 self.private.assert_not_called()
+
+    def test_mock_missing_or_unknown_api_mode_aborts_before_server_access(self):
+        for mode in ("mock", "unknown", None):
+            with self.subTest(mode=mode):
+                self.frontend_build(api_mode=mode)
+                with self.assertRaisesRegex(ValueError, "Build metadata"):
+                    preview.deploy(self.root)
+                self.run.assert_not_called()
+                self.backup.assert_not_called()
+                self.push.assert_not_called()
 
     def test_missing_build_metadata_aborts_before_server_operations(self):
         (self.root / "FE/dist/build-info.json").unlink()
