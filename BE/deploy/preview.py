@@ -201,24 +201,41 @@ def replace(target, link, stamp):
     run(200, ["mv", "-Tf", temporary, link])
 
 
-def restore(previous_jar, previous_frontend, stamp):
+def restore(previous_jar, previous_frontend, stamp, backend_active=True, web_active=True):
     failures = []
     for target, path in ((previous_jar, JAR), (previous_frontend, FRONTEND)):
         try:
             replace(target, path, stamp + "-restore")
         except Exception as error:
             failures.append(f"{path}: {type(error).__name__}")
-    try:
-        run(200, ["systemctl", "restart", "myworkspace-preview"])
-    except Exception as error:
-        failures.append(f"backend restart: {type(error).__name__}")
-    for port in (8081, 8088):
+    services = [("myworkspace-preview", "restart" if backend_active else "stop")]
+    if not web_active:
+        services.append(("myworkspace-preview-web", "stop"))
+    for service, action in services:
+        try:
+            run(200, ["systemctl", action, service])
+        except Exception as error:
+            failures.append(f"{service} {action}: {type(error).__name__}")
+    ports = [8081] if backend_active else []
+    if backend_active and web_active:
+        ports.append(8088)
+    for port in ports:
         try:
             if not ready(port):
                 failures.append(f"port {port} readiness")
         except Exception as error:
             failures.append(f"port {port}: {type(error).__name__}")
     return failures
+
+
+def service_active(service):
+    try:
+        run(200, ["systemctl", "is-active", "--quiet", service])
+        return True
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 3:
+            raise
+        return False
 
 
 def deploy(root=None):
@@ -259,8 +276,8 @@ def _deploy(root, frontend_snapshot):
     previous_frontend = run(200, ["readlink", FRONTEND]).strip()
     if not previous_jar.startswith("/opt/myworkspace-preview/releases/") or not previous_frontend.startswith("/var/www/myworkspace-preview/releases/"):
         raise ValueError("Preview release links are not configured")
-    for service in ("myworkspace-preview", "myworkspace-preview-web"):
-        run(200, ["systemctl", "is-active", "--quiet", service])
+    backend_active = service_active("myworkspace-preview")
+    web_active = service_active("myworkspace-preview-web")
     commit = build["commit"]
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     snapshot = backup(stamp)
@@ -285,6 +302,10 @@ def _deploy(root, frontend_snapshot):
         run(200, ["systemctl", "restart", "myworkspace-preview"])
         if not ready():
             raise RuntimeError("Preview backend did not become ready")
+        if not web_active:
+            run(200, ["systemctl", "start", "myworkspace-preview-web"])
+            if not ready(8088):
+                raise RuntimeError("Preview web endpoint did not become ready")
         verify_identity()
         replace(frontend, FRONTEND, stamp)
         if not ready(8088):
@@ -292,7 +313,7 @@ def _deploy(root, frontend_snapshot):
         identity = verify_identity()
         verify_frontend(expected_frontend)
     except BaseException as error:
-        failures = restore(previous_jar, previous_frontend, stamp)
+        failures = restore(previous_jar, previous_frontend, stamp, backend_active, web_active)
         if failures:
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise

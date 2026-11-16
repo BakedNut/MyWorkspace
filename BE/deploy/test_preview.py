@@ -123,19 +123,46 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.run.assert_any_call(200, ["systemctl", "restart", "myworkspace-preview"])
         self.assertEqual([call.args for call in self.ready.call_args_list], [(8081,), (8088,)])
 
-    def test_either_stopped_service_aborts_before_backup_or_upload(self):
-        for stopped in ("myworkspace-preview", "myworkspace-preview-web"):
-            with self.subTest(service=stopped):
+    def test_all_initial_service_states_install_guard_before_starting(self):
+        for backend_active, web_active in [(False, False), (False, True), (True, False), (True, True)]:
+            with self.subTest(backend=backend_active, web=web_active):
+                guarded = False
+
+                def guard(jar):
+                    nonlocal guarded
+                    guarded = True
+
                 def run(ct, args, data=None):
-                    if args == ["systemctl", "is-active", "--quiet", stopped]:
+                    states = {"myworkspace-preview": backend_active,
+                              "myworkspace-preview-web": web_active}
+                    if args[:3] == ["systemctl", "is-active", "--quiet"] and not states[args[3]]:
                         raise subprocess.CalledProcessError(3, args)
+                    if args[:2] in (["systemctl", "start"], ["systemctl", "restart"]):
+                        self.assertTrue(guarded)
                     return self.server_run(ct, args, data)
+
+                self.guard.side_effect = guard
                 self.run.side_effect = run
-                with self.assertRaises(subprocess.CalledProcessError):
-                    preview.deploy(self.root)
-                self.backup.assert_not_called()
-                self.push.assert_not_called()
-                self.private.assert_not_called()
+                preview.deploy(self.root)
+                self.assertTrue(guarded)
+
+    def test_stopped_backend_rejected_by_guard_is_not_restarted_during_rollback(self):
+        def run(ct, args, data=None):
+            if args[:3] == ["systemctl", "is-active", "--quiet"]:
+                raise subprocess.CalledProcessError(3, args)
+            if args == ["systemctl", "restart", "myworkspace-preview"]:
+                self.guard.assert_called_once()
+                raise subprocess.CalledProcessError(1, args)
+            return self.server_run(ct, args, data)
+
+        self.run.side_effect = run
+        with self.assertRaises(subprocess.CalledProcessError):
+            preview.deploy(self.root)
+        self.assert_restored()
+        self.assertEqual(sum(call.args[1] == ["systemctl", "restart", "myworkspace-preview"]
+                             for call in self.run.call_args_list), 1)
+        for service in ("myworkspace-preview", "myworkspace-preview-web"):
+            self.run.assert_any_call(200, ["systemctl", "stop", service])
 
     def test_success_checks_each_service_and_the_web_endpoint(self):
         preview.deploy(self.root)
