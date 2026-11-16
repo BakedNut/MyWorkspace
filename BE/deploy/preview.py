@@ -9,6 +9,7 @@ import hashlib
 import json
 import io
 import shutil
+import signal
 import subprocess
 import tempfile
 import sys
@@ -299,5 +300,19 @@ def _deploy(root, frontend_snapshot):
         print(f"Warning: release {commit} is active; local deployment record write failed ({type(error).__name__}).", file=sys.stderr)
 
 
+def main():
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminate(signum, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+
+    try:
+        signal.signal(signal.SIGTERM, terminate)
+        deploy()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 if __name__ == "__main__":
-    deploy()
+    main()

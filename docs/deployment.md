@@ -62,7 +62,7 @@ pct exec 200 -- systemctl start myworkspace-preview myworkspace-preview-web
 python3 BE/deploy/preview.py
 ```
 
-배포 시 JAR·FE의 현재 커밋 일치와 FE 전체 파일 해시를 검사하고, 빌드 산출물을 스냅샷으로 보관해 업로드합니다. 테스트 DB·암호화 키를 백업한 뒤 새 릴리스로 전환합니다. 업로드한 파일 해시와 API 상태를 검사합니다. FE 전환 전후에 8081·8088의 배포 상태 API에서 같은 백엔드 인스턴스인지 확인하고, 해당 인스턴스의 실제 연결 DB가 myworkspace_preview인지 확인합니다. 결과가 다르면 이전 테스트 릴리스로 복구합니다. 실제 제공되는 FE 파일의 내용·미디어 타입·인코딩도 검사합니다. 실패 시 이전 테스트 릴리스로 복구합니다. 배포 결과는 서버의 deployed-version.json과 로컬 .runtime/shortcuts-preview/deployment.json에 기록합니다. [테스트 배포 코드](../BE/deploy/preview.py)
+배포 시 JAR·FE의 현재 커밋 일치와 FE 전체 파일 해시를 검사하고, 빌드 산출물을 스냅샷으로 보관해 업로드합니다. 테스트 DB·암호화 키를 백업한 뒤 새 릴리스로 전환합니다. 업로드한 파일 해시와 API 상태를 검사합니다. FE 전환 전후에 8081·8088의 배포 상태 API에서 같은 백엔드 인스턴스인지 확인하고, 해당 인스턴스의 실제 연결 DB가 myworkspace_preview인지 확인합니다. 결과가 다르면 이전 테스트 릴리스로 복구합니다. 실제 제공되는 FE 파일의 내용·미디어 타입·인코딩도 검사합니다. 실패 시 이전 테스트 릴리스로 복구합니다. CLI가 릴리스 전환 중 SIGTERM을 받으면 롤백 후 종료하며, 복구 중 추가 SIGTERM은 무시하고 기존 신호 처리기를 복원합니다. 배포 결과는 서버의 deployed-version.json과 로컬 .runtime/shortcuts-preview/deployment.json에 기록합니다. [테스트 배포 코드](../BE/deploy/preview.py)
 
 테스트 주소와 API 상태를 확인합니다.
 
