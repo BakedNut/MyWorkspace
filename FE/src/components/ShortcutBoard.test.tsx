@@ -113,3 +113,43 @@ it.each(["link", "group"])("키보드 %s 이동의 후보에서 중복된 분류
   expect([...passed.keys()]).toEqual(kind === "link" ? ["empty", "link"] : ["open", "empty"]);
   expect(rects.size).toBe(3);
 });
+
+it("접힌 분류는 유지하고 내부 링크는 해제하며 펼치면 다시 등록한다", () => {
+  const board = {
+    revision: 0,
+    groups: [
+      {
+        id: "open",
+        name: "열린 분류",
+        collapsed: false,
+        links: [{ id: "visible", name: "표시 링크", url: "https://example.com/" }],
+      },
+      {
+        id: "closed",
+        name: "접힌 분류",
+        collapsed: true,
+        links: [{ id: "hidden", name: "숨은 링크", url: "https://example.org/" }],
+      },
+    ],
+  };
+  const props = {
+    editing: true,
+    busy: false,
+    onChange: vi.fn(),
+    onEditLink: vi.fn(),
+    onEditGroup: vi.fn(),
+    onDeleteGroup: vi.fn(),
+  };
+  const { container, rerender } = render(<ShortcutBoard {...props} board={board} />);
+  expect(container.querySelector('[data-group-id="closed"]')).toBeInTheDocument();
+  expect(container.querySelector('[data-link-id="visible"]')).toBeInTheDocument();
+  expect(container.querySelector('[data-link-id="hidden"]')).not.toBeInTheDocument();
+  rerender(
+    <ShortcutBoard
+      {...props}
+      board={{ ...board, groups: board.groups.map((group) => ({ ...group, collapsed: false })) }}
+    />,
+  );
+  expect(container.querySelector('[data-link-id="hidden"]')).toBeInTheDocument();
+  expect(board.groups[1]!.links[0]!.id).toBe("hidden");
+});
