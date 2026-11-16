@@ -45,7 +45,7 @@ Java 21 · Spring Boot · Spring Security · JPA · JdbcTemplate · MySQL을 사
 | PUT /api/shortcuts | 전체 목록 저장. 이전 revision이면 409 CONFLICT |
 | GET 또는 HEAD /api/shortcuts/icons/{id} | 저장된 링크의 사이트 아이콘 조회. site 쿼리는 현재 URL의 출처와 비교 |
 
-최대 분류 50개·전체 링크 200개를 지원합니다. 분류 이름은 80자, 링크 이름은 120자, URL은 2,048자까지이며 HTTP·HTTPS URL을 검증합니다. 이름의 앞뒤 공백을 제거하고 공백만 있는 이름·제어 문자를 거부합니다. 문서 잠금 안에서 revision을 확인하고 저장 시 증가시킵니다.
+최대 분류 50개·전체 링크 200개를 지원합니다. 분류 이름은 80자, 링크 이름은 120자, URL은 2,048자까지이며 HTTP·HTTPS URL을 검증합니다. 이름의 앞뒤 공백을 제거하고 공백만 있는 이름·제어 문자를 거부합니다. 문서 잠금 안에서 revision을 확인하고 정규화한 목록이 변경된 경우에 증가시킵니다. 변경 없는 저장은 현재 revision을 반환하며 이전 revision의 요청은 409로 거부합니다.
 
 V8은 app_document에 초기 바로가기 문서를 추가하고, V9는 shortcut_icon 캐시 테이블을 만듭니다. 캐시는 출처별로 공유하며 정상 아이콘은 7일, 아이콘 없음은 6시간 보관합니다. 외부 수집은 작업자 2개·대기열 32개로 제한합니다. 수집 대기·대기열 포화는 202와 Retry-After, 수집 완료 후 아이콘 없음은 204, 정상 이미지는 200을 반환합니다. 아직 수집 결과가 없으면 공유 작업을 유지하며 즉시 202를 반환합니다.
 
@@ -74,4 +74,4 @@ GET /api/health/deployment
 
 ## 테스트 배포 시작 전 DB 검사
 
-PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 롤백한 버전의 재시작에도 동일 검사가 적용됩니다.
+PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 배포 실패 시 기존 사전 검사 drop-in의 존재 여부와 내용을 복원하고 단위 설정을 다시 읽은 뒤 이전 실행·중지 상태를 복구합니다.

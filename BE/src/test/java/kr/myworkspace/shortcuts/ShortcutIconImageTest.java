@@ -27,6 +27,22 @@ class ShortcutIconImageTest {
   }
 
   @Test
+  void acceptsSolidOpaqueIconsAndRejectsFullyTransparentPixels() throws Exception {
+    var image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+    var output = new ByteArrayOutputStream();
+    for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) image.setRGB(x, y, 0xff0080ff);
+    ImageIO.write(image, "png", output);
+    var icon = ShortcutIconImage.decode(output.toByteArray());
+    assertThat(icon).isNotNull();
+    assertThat(ImageIO.read(new java.io.ByteArrayInputStream(icon.data())).getRGB(32, 32))
+        .isEqualTo(0xff0080ff);
+    for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) image.setRGB(x, y, x);
+    output.reset();
+    ImageIO.write(image, "png", output);
+    assertThat(ShortcutIconImage.decode(output.toByteArray())).isNull();
+  }
+
+  @Test
   void removesActiveSvgContentAndExternalResources() {
     String svg =
         """

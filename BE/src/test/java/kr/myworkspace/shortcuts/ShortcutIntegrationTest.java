@@ -103,6 +103,46 @@ class ShortcutIntegrationTest {
   }
 
   @Test
+  void unchangedNormalizedSaveKeepsRevisionAndOtherTabsCanStillWrite() throws Exception {
+    var first =
+        mvc.perform(
+                put("/api/shortcuts")
+                    .with(trusted)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(board("https://example.com/"))))
+            .andExpect(status().isOk())
+            .andReturn();
+    var current = json.readValue(first.getResponse().getContentAsString(), ShortcutBoard.class);
+    var same = new ShortcutBoard(current.revision(), board("https://example.com/").groups());
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(same)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.revision").value(current.revision()));
+    assertThat(docs.read("shortcuts", ShortcutBoard.class)).isEqualTo(current);
+    var changed = new ShortcutBoard(current.revision(), List.of());
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(changed)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.revision").value(current.revision() + 1));
+    mvc.perform(
+            put("/api/shortcuts")
+                .with(trusted)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(changed)))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
   void rejectsUnsafeUrlsInvalidRecordsAndDuplicateIds() throws Exception {
     for (String url :
         List.of(
