@@ -74,6 +74,43 @@ class ShortcutIconFetcherTest {
   }
 
   @Test
+  void distinguishesTemporaryHttpFailureFromMissingIcon() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    var status = new java.util.concurrent.atomic.AtomicInteger(503);
+    server.createContext(
+        "/",
+        exchange -> {
+          exchange.sendResponseHeaders(status.get(), -1);
+          exchange.close();
+        });
+    var fetcher =
+        new ShortcutIconFetcher("") {
+          @Override
+          DnsResolver resolver(URI source, long deadline) {
+            return new DnsResolver() {
+              public InetAddress[] resolve(String host) {
+                return new InetAddress[] {InetAddress.getLoopbackAddress()};
+              }
+
+              public String resolveCanonicalHostname(String host) {
+                return host;
+              }
+            };
+          }
+        };
+    server.start();
+    try {
+      var origin = URI.create("http://fixture.test:" + server.getAddress().getPort() + "/");
+      assertThatThrownBy(() -> fetcher.fetch(origin)).isInstanceOf(RuntimeException.class);
+      status.set(404);
+      assertThat(fetcher.fetch(origin)).isNull();
+    } finally {
+      fetcher.close();
+      server.stop(0);
+    }
+  }
+
+  @Test
   void discoversDefaultFaviconAtTheFinalPageHost() throws Exception {
     var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
     int port = server.getAddress().getPort();
@@ -96,7 +133,7 @@ class ShortcutIconFetcherTest {
           String body =
               icon
                   ? "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path"
-                        + " fill='#0080ff' d='M0 0 L24 24 L0 24 Z'/></svg>"
+                      + " fill='#0080ff' d='M0 0 L24 24 L0 24 Z'/></svg>"
                   : "<html><head></head><body>fixture</body></html>";
           byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
           int status = icon || path.equals("/landing") ? 200 : 404;
@@ -143,15 +180,16 @@ class ShortcutIconFetcherTest {
     try (var client = mock(CloseableHttpClient.class)) {
       var resolver = mock(DnsResolver.class);
       when(resolver.resolve("127.0.0.1")).thenThrow(new UnknownHostException("rejected"));
-      assertThat(
-              fetcher.read(
-                  client,
-                  resolver,
-                  URI.create("https://example.com/"),
-                  URI.create("http://127.0.0.1/"),
-                  false,
-                  System.nanoTime() + TimeUnit.SECONDS.toNanos(2)))
-          .isNull();
+      assertThatThrownBy(
+              () ->
+                  fetcher.read(
+                      client,
+                      resolver,
+                      URI.create("https://example.com/"),
+                      URI.create("http://127.0.0.1/"),
+                      false,
+                      System.nanoTime() + TimeUnit.SECONDS.toNanos(2)))
+          .isInstanceOf(ShortcutIconFetcher.Unavailable.class);
       verifyNoInteractions(client);
     } finally {
       fetcher.close();
@@ -172,15 +210,16 @@ class ShortcutIconFetcherTest {
       large.setEntity(new ByteArrayEntity(new byte[256 * 1024 + 1], ContentType.IMAGE_PNG));
       when(client.executeOpen(isNull(), any(HttpGet.class), isNull())).thenReturn(redirect, large);
       URI origin = URI.create("https://example.com/");
-      assertThat(
-              fetcher.read(
-                  client,
-                  resolver,
-                  origin,
-                  origin,
-                  false,
-                  System.nanoTime() + TimeUnit.SECONDS.toNanos(2)))
-          .isNull();
+      assertThatThrownBy(
+              () ->
+                  fetcher.read(
+                      client,
+                      resolver,
+                      origin,
+                      origin,
+                      false,
+                      System.nanoTime() + TimeUnit.SECONDS.toNanos(2)))
+          .isInstanceOf(ShortcutIconFetcher.Unavailable.class);
       assertThat(
               fetcher.read(
                   client,
@@ -272,15 +311,16 @@ class ShortcutIconFetcherTest {
                 return new InetAddress[] {InetAddress.getByName("8.8.8.8")};
               });
       URI origin = URI.create("https://example.com/");
-      assertThat(
-              fetcher.read(
-                  client,
-                  resolver,
-                  origin,
-                  origin,
-                  false,
-                  System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10)))
-          .isNull();
+      assertThatThrownBy(
+              () ->
+                  fetcher.read(
+                      client,
+                      resolver,
+                      origin,
+                      origin,
+                      false,
+                      System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10)))
+          .isInstanceOf(ShortcutIconFetcher.Unavailable.class);
       verifyNoInteractions(client);
     } finally {
       fetcher.close();
