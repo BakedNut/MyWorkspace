@@ -4,6 +4,8 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.flyway.autoconfigure.FlywayProperties;
 import org.springframework.core.env.Environment;
 
 /** Standalone systemd pre-start check. This context has no database initializers. */
@@ -21,11 +23,19 @@ public class PreviewDatabaseCheck {
     String url = environment.getRequiredProperty("spring.datasource.url");
     String user = environment.getRequiredProperty("spring.datasource.username");
     String password = environment.getRequiredProperty("spring.datasource.password");
+    var flyway =
+        Binder.get(environment)
+            .bind("spring.flyway", FlywayProperties.class)
+            .orElseGet(FlywayProperties::new);
+    if ((flyway.getDefaultSchema() != null
+            && !"myworkspace_preview".equals(flyway.getDefaultSchema()))
+        || flyway.getSchemas().stream().anyMatch(schema -> !"myworkspace_preview".equals(schema)))
+      throw new IllegalStateException("Preview requires myworkspace_preview for Flyway schemas");
     check(url, user, password);
     check(
-        environment.getProperty("spring.flyway.url", url),
-        environment.getProperty("spring.flyway.user", user),
-        environment.getProperty("spring.flyway.password", password));
+        flyway.getUrl() == null ? url : flyway.getUrl(),
+        flyway.getUser() == null ? user : flyway.getUser(),
+        flyway.getPassword() == null ? password : flyway.getPassword());
   }
 
   private static void check(String url, String user, String password) throws SQLException {
