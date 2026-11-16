@@ -5,10 +5,12 @@ import {
   PointerSensor,
   closestCenter,
   pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -27,6 +29,23 @@ import { moveShortcut, parseShortcutUrl } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import type { ShortcutBoard as Board, ShortcutGroup, ShortcutLink } from "@/types/domain";
 
+const keyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
+  const { active, droppableContainers, droppableRects } = args.context;
+  const rects = new Map(droppableRects);
+  for (const container of droppableContainers.getEnabled()) {
+    const data = container.data.current;
+    const excluded =
+      active?.data.current?.["kind"] === "group"
+        ? data?.["kind"] !== "group"
+        : data?.["kind"] === "group" && !data["acceptsLink"];
+    if (excluded) rects.delete(container.id);
+  }
+  return sortableKeyboardCoordinates(event, {
+    ...args,
+    context: { ...args.context, droppableRects: rects },
+  });
+};
+
 const collision: CollisionDetection = (args) => {
   const containers = args.droppableContainers.filter(
     (item) =>
@@ -36,7 +55,8 @@ const collision: CollisionDetection = (args) => {
   const hits = pointerWithin(options);
   const link = hits.find((hit) => String(hit.id).startsWith("link:"));
   if (args.pointerCoordinates) return link ? [link] : hits;
-  return closestCenter(options);
+  const intersections = rectIntersection(options);
+  return intersections.length ? intersections : closestCenter(options);
 };
 
 interface Props {
@@ -61,7 +81,7 @@ export function ShortcutBoard({
   const [dragging, setDragging] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardCoordinates }),
   );
   const finish = ({ active, over }: DragEndEvent) => {
     setDragging(null);
@@ -205,7 +225,12 @@ function GroupSection({
     isOver,
   } = useSortable({
     id: `group:${group.id}`,
-    data: { kind: "group", groupId: group.id, name: group.name },
+    data: {
+      kind: "group",
+      groupId: group.id,
+      name: group.name,
+      acceptsLink: group.collapsed || group.links.length === 0,
+    },
     disabled: !editing || busy,
   });
   return (
