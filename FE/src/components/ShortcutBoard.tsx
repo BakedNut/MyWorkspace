@@ -308,7 +308,7 @@ function GroupSection({
         )}
       </div>
       <div id={`group-content-${group.id}`} hidden={group.collapsed} className="min-w-0 p-3 sm:p-4">
-        {children}
+        {!group.collapsed && children}
       </div>
     </section>
   );
