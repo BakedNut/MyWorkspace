@@ -415,6 +415,12 @@ function ShortcutsPage() {
                   item.links.some((link) => link.id === id),
                 );
                 const existingLink = existingGroup?.links.find((link) => link.id === id);
+                if (dialog.kind === "link" && dialog.link && !existingLink && !requiresRecreation) {
+                  setRequiresRecreation(true);
+                  throw new Error(
+                    "이 바로가기는 다른 곳에서 삭제됐습니다. 복원하려면 ‘다시 추가’를 누르세요.",
+                  );
+                }
                 if (dialog.kind === "link" && !dialog.link) {
                   const attempted = attemptedCreate.current;
                   // Preserve server edits to fields unchanged since the last possible save.
@@ -469,9 +475,17 @@ function ShortcutsPage() {
                 const submitted = { name };
                 const selected =
                   dialog.kind === "group"
-                    ? (dialog.group ??
-                      current.groups.find((group) => group.id === dialog.operationId))
+                    ? current.groups.find(
+                        (group) => group.id === (dialog.group?.id ?? dialog.operationId),
+                      )
                     : undefined;
+                if (dialog.kind === "group" && dialog.group) {
+                  if (!selected)
+                    throw new Error(
+                      "이 분류는 다른 곳에서 삭제됐습니다. 창을 닫고 최신 목록을 확인하세요.",
+                    );
+                  if (name === dialog.group.name) name = selected.name;
+                }
                 if (dialog.kind === "group" && !dialog.group) {
                   const attempted = attemptedCreate.current;
                   if (attempted && selected && name === attempted.name) name = selected.name;
