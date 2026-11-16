@@ -76,6 +76,42 @@ class PreviewDatabaseCheckTest {
   }
 
   @Test
+  void rejectsConnectionOverridesBeforeOpeningTheRuntimePool() throws Exception {
+    for (String property :
+        new String[] {
+          "spring.datasource.hikari.jdbc-url",
+          "spring.datasource.hikari.jdbcUrl",
+          "spring.datasource.hikari.data-source-properties[url]",
+          "spring.datasource.hikari.connection-init-sql",
+          "spring.datasource.hikari.catalog",
+          "spring.datasource.hikari.schema",
+          "spring.datasource.jndi-name",
+          "spring.flyway.jdbc-properties[databaseName]",
+          "spring.flyway.init-sqls[0]"
+        }) {
+      var settings =
+          environment("myworkspace_preview", "myworkspace_preview")
+              .withProperty(property, url("myworkspace"));
+      assertThatThrownBy(() -> PreviewDatabaseCheck.verify(settings))
+          .as(property)
+          .isInstanceOf(IllegalStateException.class);
+    }
+    var variables = environment("myworkspace_preview", "myworkspace_preview");
+    variables
+        .getPropertySources()
+        .addFirst(
+            new org.springframework.core.env.SystemEnvironmentPropertySource(
+                "systemEnvironment",
+                java.util.Map.of("SPRING_DATASOURCE_HIKARI_JDBCURL", url("myworkspace"))));
+    assertThatThrownBy(() -> PreviewDatabaseCheck.verify(variables))
+        .isInstanceOf(IllegalStateException.class);
+    PreviewDatabaseCheck.verify(
+        environment("myworkspace_preview", "myworkspace_preview")
+            .withProperty("spring.datasource.hikari.maximum-pool-size", "5")
+            .withProperty("spring.datasource.hikari.minimum-idle", "1"));
+  }
+
+  @Test
   void standaloneBootstrapRejectsFlywayUrlOverrideBeforeMigrations() {
     assertThatThrownBy(
             () ->
