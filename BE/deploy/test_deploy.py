@@ -7,6 +7,13 @@ import deploy
 
 
 class DeploymentTest(unittest.TestCase):
+    def test_api_cache_policy_uses_the_upstream_header(self):
+        config = (Path(__file__).resolve().parents[2] / "FE/deploy/nginx.conf").read_text()
+        api = config.split("location /api/ {", 1)[1].split("}", 1)[0]
+        self.assertIn("proxy_hide_header Cache-Control;", api)
+        self.assertIn("add_header Cache-Control $upstream_http_cache_control always;", api)
+        self.assertIn('add_header Cache-Control "no-store" always;', config.split("location /", 1)[0])
+
     def fixture(self, root):
         for path, content in {
             "BE/target/myworkspace-0.0.1-SNAPSHOT.jar": "fixture jar",

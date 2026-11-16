@@ -112,8 +112,7 @@ class ShortcutIconService {
   CompletableFuture<Lookup> response(CompletableFuture<Lookup> task, Cached cached) {
     if (cached != null && cached.icon() != null)
       return CompletableFuture.completedFuture(new Lookup(cached.icon(), false));
-    // A response deadline must not complete the shared background collection task.
-    return task.copy().completeOnTimeout(new Lookup(null, true), 12, TimeUnit.SECONDS);
+    return CompletableFuture.completedFuture(task.getNow(new Lookup(null, true)));
   }
 
   void store(String key, ShortcutIcon icon) {

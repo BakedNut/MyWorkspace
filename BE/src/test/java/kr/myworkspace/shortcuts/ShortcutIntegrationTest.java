@@ -168,6 +168,8 @@ class ShortcutIntegrationTest {
     byte[] bytes = {1, 2, 3};
     when(fetcher.fetch(URI.create("https://example.com/")))
         .thenReturn(new ShortcutIcon("image/png", bytes));
+    icons.get("portal", null);
+    awaitIconWorkers();
     var first =
         mvc.perform(get("/api/shortcuts/icons/portal").with(trusted))
             .andExpect(request().asyncStarted())
@@ -177,6 +179,7 @@ class ShortcutIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(content().contentType("image/png"))
         .andExpect(content().bytes(bytes))
+        .andExpect(header().string("Cache-Control", "max-age=86400, private"))
         .andExpect(
             header()
                 .string(
@@ -193,6 +196,8 @@ class ShortcutIntegrationTest {
   @Test
   void cachesMissingIconsAndProtectsIconRequests() throws Exception {
     docs.save("shortcuts", board("https://example.com/"));
+    icons.get("portal", null);
+    awaitIconWorkers();
     for (int i = 0; i < 2; i++) {
       var request = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
       request.getAsyncResult(5000);
@@ -240,7 +245,7 @@ class ShortcutIntegrationTest {
   }
 
   @Test
-  void responseTimeoutKeepsSharedCollectionPendingUntilTheIconIsStored() throws Exception {
+  void pendingIconsReturnImmediatelyAndAllowSavingBeforeCollectionCompletes() throws Exception {
     docs.save("shortcuts", board("https://example.com/"));
     var entered = new java.util.concurrent.CountDownLatch(1);
     var release = new java.util.concurrent.CountDownLatch(1);
@@ -254,13 +259,21 @@ class ShortcutIntegrationTest {
     try {
       var first = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
       assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      first.getAsyncResult(14_000);
+      first.getAsyncResult(1000);
       mvc.perform(asyncDispatch(first)).andExpect(status().isAccepted());
       assertThat(icons.pending.values()).hasSize(1).allMatch(task -> !task.isDone());
       var second = mvc.perform(head("/api/shortcuts/icons/portal").with(trusted)).andReturn();
+      second.getAsyncResult(1000);
+      mvc.perform(asyncDispatch(second)).andExpect(status().isAccepted());
+      mvc.perform(
+              put("/api/shortcuts")
+                  .with(trusted)
+                  .with(csrf())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(json.writeValueAsString(board("https://example.com/"))))
+          .andExpect(status().isOk());
       release.countDown();
-      second.getAsyncResult(5000);
-      mvc.perform(asyncDispatch(second)).andExpect(status().isOk());
+      awaitIconWorkers();
       var cached = mvc.perform(get("/api/shortcuts/icons/portal").with(trusted)).andReturn();
       cached.getAsyncResult(5000);
       mvc.perform(asyncDispatch(cached))
@@ -286,6 +299,8 @@ class ShortcutIntegrationTest {
     docs.save("shortcuts", board("https://example.com/"));
     when(fetcher.fetch(URI.create("https://example.com/")))
         .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+    icons.get("portal", null);
+    awaitIconWorkers();
     var login =
         mvc.perform(
                 post("/api/auth/login")
@@ -320,6 +335,8 @@ class ShortcutIntegrationTest {
         .andExpect(status().isOk());
     when(fetcher.fetch(URI.create("https://react.dev/")))
         .thenReturn(new ShortcutIcon("image/png", new byte[] {9}));
+    icons.get("portal", null);
+    awaitIconWorkers();
     var saved =
         mvc.perform(
                 get("/api/shortcuts/icons/portal").param("site", "https://react.dev").with(trusted))
@@ -335,6 +352,8 @@ class ShortcutIntegrationTest {
     docs.save("shortcuts", board("https://example.com/"));
     when(fetcher.fetch(URI.create("https://example.com/")))
         .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+    icons.get("portal", null);
+    awaitIconWorkers();
     assertThat(icons.get("portal", null).get(5, java.util.concurrent.TimeUnit.SECONDS).icon())
         .isNotNull();
     jdbc.update("update shortcut_icon set checked_at=0");
@@ -383,6 +402,8 @@ class ShortcutIntegrationTest {
       docs.save("shortcuts", board(pair.getKey()));
       when(fetcher.fetch(URI.create(pair.getValue())))
           .thenReturn(new ShortcutIcon("image/png", new byte[] {1}));
+      icons.get("portal", null);
+      awaitIconWorkers();
       var first =
           mvc.perform(
                   get("/api/shortcuts/icons/portal")
