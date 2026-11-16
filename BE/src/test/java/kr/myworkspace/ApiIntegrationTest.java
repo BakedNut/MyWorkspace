@@ -45,6 +45,22 @@ class ApiIntegrationTest {
   }
 
   @Test
+  void deploymentProbeUsesTheActualDatabaseAndStableInstance() throws Exception {
+    var first =
+        mvc.perform(get("/api/health/deployment").header(SecurityConfig.CLIENT_HEADER, EXT))
+            .andExpect(status().isOk())
+            .andReturn();
+    var value = json.readTree(first.getResponse().getContentAsString());
+    assertThat(value.path("instance").asText()).isNotBlank();
+    assertThat(value.path("previewDatabase").asBoolean())
+        .isEqualTo(
+            "myworkspace_preview".equals(jdbc.queryForObject("SELECT DATABASE()", String.class)));
+    mvc.perform(get("/api/health/deployment").header(SecurityConfig.CLIENT_HEADER, EXT))
+        .andExpect(content().json(first.getResponse().getContentAsString()));
+    assertThat(value.size()).isEqualTo(2);
+  }
+
+  @Test
   @org.springframework.transaction.annotation.Transactional
   void calendarVisibilityPersistsAcrossRequestsAndRequiresAuthenticationAndCsrf() throws Exception {
     mvc.perform(get("/api/calendar/visibility").header(SecurityConfig.CLIENT_HEADER, EXT))

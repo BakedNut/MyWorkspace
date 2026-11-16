@@ -37,6 +37,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.mock("subprocess.check_output", return_value="commit")
         self.private = self.mock("private_file")
         self.ready = self.mock("ready", return_value=True)
+        self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
     def frontend_build(self, commit="commit", dirty=False):
         dist = self.root / "FE/dist"
@@ -68,6 +69,15 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertTrue(all("/opt/myworkspace/current.jar" not in args and
                             "/var/www/myworkspace/current" not in args for args in commands))
         self.private.assert_not_called()
+
+    def test_wrong_backend_or_database_aborts_without_publishing_frontend(self):
+        self.identity.side_effect = RuntimeError("Preview backend identity mismatch")
+        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+            preview.deploy(self.root)
+        self.assert_restored()
+        commands = [call.args[1] for call in self.run.call_args_list]
+        published = [args for args in commands if args[:2] == ["ln", "-s"] and args[-1].startswith(preview.FRONTEND + ".")]
+        self.assertTrue(all(args[2] == self.old_frontend for args in published))
 
     def test_failed_backend_readiness_restores_both_preview_links(self):
         self.ready.side_effect = [False, True, True]
@@ -417,6 +427,78 @@ class PreviewReadinessTest(unittest.TestCase):
                 self.assertFalse(preview.ready(8088))
         with patch.object(preview, "run", side_effect=subprocess.CalledProcessError(22, "curl")), patch.object(preview.time, "sleep"):
             self.assertFalse(preview.ready(8088))
+
+
+class PreviewIdentityTest(unittest.TestCase):
+    def test_rejects_other_instance_production_database_and_invalid_response(self):
+        expected = {"instance": "preview", "previewDatabase": True}
+        invalid = [
+            {"instance": "production", "previewDatabase": True},
+            {"instance": "preview", "previewDatabase": False},
+            {"instance": "preview", "previewDatabase": "true"},
+            {"status": "ok"},
+            {},
+        ]
+        for direct, web in [(expected, item) for item in invalid] + [(item, expected) for item in invalid]:
+            with self.subTest(direct=direct, web=web), patch.object(preview, "run", side_effect=[json.dumps(direct), json.dumps(web)]):
+                with self.assertRaises(RuntimeError):
+                    preview.verify_identity()
+
+    def test_healthy_web_route_to_the_wrong_backend_is_rejected_over_http(self):
+        import urllib.request
+        current = {"instance": "preview", "previewDatabase": True}
+        routed = dict(current)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                value = {"status": "ok"} if self.path == "/api/health" else (
+                    current if self.server is direct else routed)
+                content = json.dumps(value).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            def log_message(self, *args):
+                pass
+
+        direct = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        web = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        servers = [direct, web]
+        threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+        for thread in threads:
+            thread.start()
+        try:
+            def run(ct, args):
+                url = args[-1].replace(":8081/", f":{direct.server_port}/").replace(
+                    ":8088/", f":{web.server_port}/")
+                with urllib.request.urlopen(url, timeout=2) as response:
+                    return response.read().decode()
+
+            with patch.object(preview, "run", side_effect=run):
+                for invalid in [{"instance": "production", "previewDatabase": True},
+                                {"instance": "preview", "previewDatabase": False}]:
+                    routed.clear()
+                    routed.update(invalid)
+                    self.assertTrue(preview.ready(8081))
+                    self.assertTrue(preview.ready(8088))
+                    with self.assertRaises(RuntimeError):
+                        preview.verify_identity()
+                routed.clear()
+                routed.update(current)
+                self.assertEqual(preview.verify_identity(), current)
+        finally:
+            for server, thread in zip(servers, threads):
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_verifies_the_actual_web_route_against_direct_backend(self):
+        expected = {"instance": "preview", "previewDatabase": True}
+        with patch.object(preview, "run", return_value=json.dumps(expected)) as run:
+            self.assertEqual(preview.verify_identity(), expected)
+            self.assertIn("http://127.0.0.1:8081/api/health/deployment", run.call_args_list[0].args[1])
+            self.assertIn("http://127.0.0.1:8088/api/health/deployment", run.call_args_list[1].args[1])
 
 
 class FrontendVerificationTest(unittest.TestCase):

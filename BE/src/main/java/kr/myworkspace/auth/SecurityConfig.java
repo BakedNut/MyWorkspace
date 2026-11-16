@@ -81,7 +81,7 @@ public class SecurityConfig {
             auth ->
                 auth.dispatcherTypeMatchers(DispatcherType.ERROR)
                     .permitAll()
-                    .requestMatchers("/api/auth/**", "/api/health")
+                    .requestMatchers("/api/auth/**", "/api/health", "/api/health/deployment")
                     .permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/site")
                     .permitAll()
