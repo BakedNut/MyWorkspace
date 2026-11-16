@@ -25,6 +25,7 @@ FRONTEND_VERIFY_SECONDS = 30
 LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
+DATABASE_GUARD = "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf"
 BACKUP_DIRECTORY = Path("/root/.local/state/myworkspace/preview-backups")
 
 
@@ -229,13 +230,24 @@ def replace(target, link, stamp):
     run(200, ["mv", "-Tf", temporary, link])
 
 
-def restore(previous_jar, previous_frontend, stamp, backend_active=True, web_active=True):
+def restore(previous_jar, previous_frontend, stamp, previous_guard, backend_active=True, web_active=True):
     failures = []
     for target, path in ((previous_jar, JAR), (previous_frontend, FRONTEND)):
         try:
             replace(target, path, stamp + "-restore")
         except Exception as error:
             failures.append(f"{path}: {type(error).__name__}")
+    try:
+        if previous_guard is None:
+            run(200, ["rm", "-f", DATABASE_GUARD])
+        else:
+            private_file(200, DATABASE_GUARD, previous_guard, 0o600)
+    except Exception as error:
+        failures.append(f"database guard: {type(error).__name__}")
+    try:
+        run(200, ["systemctl", "daemon-reload"])
+    except Exception as error:
+        failures.append(f"daemon-reload: {type(error).__name__}")
     services = [("myworkspace-preview", "restart" if backend_active else "stop")]
     if not web_active:
         services.append(("myworkspace-preview-web", "stop"))
@@ -277,6 +289,11 @@ def deploy(root=None):
             _deploy(root, Path(directory) / "frontend")
 
 
+def read_database_guard():
+    program = "import json,pathlib,sys;p=pathlib.Path(sys.argv[1]);print(json.dumps(p.read_text() if p.exists() else None))"
+    return json.loads(run(200, ["python3", "-c", program, DATABASE_GUARD]))
+
+
 def configure_database_guard(jar):
     # Read the loaded command after applying pending unit changes.
     run(200, ["systemctl", "daemon-reload"])
@@ -285,7 +302,7 @@ def configure_database_guard(jar):
     command = java_command(jar, arguments, "kr.myworkspace.common.database.PreviewDatabaseCheck")
     # Preserve argument boundaries and literal unit specifiers in the generated unit.
     encoded = " ".join(json.dumps(arg.replace("%", "%%"), ensure_ascii=False) for arg in command)
-    private_file(200, "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf",
+    private_file(200, DATABASE_GUARD,
                  "[Service]\nExecStartPre=" + encoded + "\n", 0o600)
     run(200, ["systemctl", "daemon-reload"])
 
@@ -327,8 +344,9 @@ def _deploy(root, frontend_snapshot):
             subprocess.run(["pct", "push", "200", str(path), destination, "--perms", "0644"], capture_output=True, check=True)
             if run(200, ["sha256sum", destination]).split()[0] != frontend_hashes[path.relative_to(dist)]:
                 raise RuntimeError("Uploaded frontend checksum mismatch")
-    configure_database_guard(target)
+    previous_guard = read_database_guard()
     try:
+        configure_database_guard(target)
         replace(target, JAR, stamp)
         run(200, ["systemctl", "restart", "myworkspace-preview"])
         if not ready():
@@ -349,7 +367,7 @@ def _deploy(root, frontend_snapshot):
         try:
             if handles_signals:
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            failures = restore(previous_jar, previous_frontend, stamp, backend_active, web_active)
+            failures = restore(previous_jar, previous_frontend, stamp, previous_guard, backend_active, web_active)
         finally:
             if handles_signals:
                 signal.signal(signal.SIGTERM, previous_handler)

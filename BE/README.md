@@ -74,4 +74,4 @@ GET /api/health/deployment
 
 ## 테스트 배포 시작 전 DB 검사
 
-PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 롤백한 버전의 재시작에도 동일 검사가 적용됩니다.
+PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 배포 실패 시 기존 사전 검사 drop-in의 존재 여부와 내용을 복원하고 단위 설정을 다시 읽은 뒤 이전 실행·중지 상태를 복구합니다.

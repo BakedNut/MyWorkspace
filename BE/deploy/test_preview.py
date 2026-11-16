@@ -38,6 +38,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.private = self.mock("private_file")
         self.ready = self.mock("ready", return_value=True)
         self.guard = self.mock("configure_database_guard")
+        self.mock("read_database_guard", return_value=None)
         self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
     def frontend_build(self, commit="commit", dirty=False, api_mode="rest"):
@@ -117,7 +118,7 @@ class PreviewDeploymentTest(unittest.TestCase):
             return ""
         self.run.side_effect = run
         self.ready.side_effect = [RuntimeError("readiness failed"), False]
-        failures = preview.restore(self.old_jar, self.old_frontend, "stamp")
+        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", None)
         self.assertEqual(len(failures), 5)
         self.run.assert_any_call(200, ["ln", "-s", self.old_frontend, preview.FRONTEND + ".stamp-restore"])
         self.run.assert_any_call(200, ["systemctl", "restart", "myworkspace-preview"])
@@ -163,6 +164,41 @@ class PreviewDeploymentTest(unittest.TestCase):
                              for call in self.run.call_args_list), 1)
         for service in ("myworkspace-preview", "myworkspace-preview-web"):
             self.run.assert_any_call(200, ["systemctl", "stop", service])
+
+    def test_guard_is_restored_on_configuration_and_activation_failure(self):
+        for previous in (None, "[Service]\nExecStartPre=/old/checker\n"):
+            for phase in ("reload", "readiness"):
+                with self.subTest(previous=previous, phase=phase):
+                    self.run.reset_mock()
+                    self.private.reset_mock()
+                    self.ready.side_effect = [False, True, True]
+                    self.guard.side_effect = RuntimeError("reload failed") if phase == "reload" else None
+                    with patch.object(preview, "read_database_guard", return_value=previous):
+                        with self.assertRaises(RuntimeError):
+                            preview.deploy(self.root)
+                    if previous is None:
+                        self.run.assert_any_call(200, ["rm", "-f", preview.DATABASE_GUARD])
+                    else:
+                        self.private.assert_called_once_with(200, preview.DATABASE_GUARD, previous, 0o600)
+                    commands = [call.args[1] for call in self.run.call_args_list]
+                    self.assertIn(["systemctl", "daemon-reload"], commands)
+                    self.assertLess(commands.index(["systemctl", "daemon-reload"]),
+                                    max(index for index, command in enumerate(commands)
+                                        if command == ["systemctl", "restart", "myworkspace-preview"]))
+
+    def test_guard_backup_failure_aborts_before_changing_service_configuration(self):
+        with patch.object(preview, "read_database_guard", side_effect=PermissionError("cannot read guard")):
+            with self.assertRaises(PermissionError):
+                preview.deploy(self.root)
+        self.guard.assert_not_called()
+        self.private.assert_not_called()
+        self.assertFalse(any(call.args[1][:2] == ["systemctl", "restart"] for call in self.run.call_args_list))
+
+    def test_guard_restore_failure_is_reported_and_reload_is_still_attempted(self):
+        self.private.side_effect = PermissionError("cannot restore guard")
+        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", "old guard")
+        self.assertEqual(failures, ["database guard: PermissionError"])
+        self.run.assert_any_call(200, ["systemctl", "daemon-reload"])
 
     def test_success_checks_each_service_and_the_web_endpoint(self):
         preview.deploy(self.root)
@@ -487,6 +523,16 @@ class PreviewDatabaseGuardTest(unittest.TestCase):
             self.assertEqual(run.call_args_list[0].args[1], ["systemctl", "daemon-reload"])
             self.assertEqual(run.call_args_list[-1].args[1], ["systemctl", "daemon-reload"])
 
+
+    def test_reads_existing_and_absent_guard_without_mutating_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "database-check.conf"
+            def run(ct, args):
+                return subprocess.check_output(args, text=True)
+            with patch.object(preview, "DATABASE_GUARD", str(path)), patch.object(preview, "run", side_effect=run):
+                self.assertIsNone(preview.read_database_guard())
+                path.write_text("[Service]\nExecStartPre=/old/checker\n")
+                self.assertEqual(preview.read_database_guard(), path.read_text())
 
     def test_dynamic_jvm_arguments_abort_before_installing_or_starting(self):
         for option in ("$JAVA_OPTS", "${JAVA_OPTS}", "@/options.txt"):
