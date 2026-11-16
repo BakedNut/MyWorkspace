@@ -1,6 +1,6 @@
 # MyWorkspace
 
-개인 일정과 학교 시간표, Proxmox 서버 상태, PC의 Wake-on-LAN을 한곳에서 관리하는 개인 웹사이트입니다.
+개인 일정과 학교 시간표, 사이트 바로가기, Proxmox 서버 상태, PC의 Wake-on-LAN을 한곳에서 관리하는 개인 웹사이트입니다.
 
 <!-- TODO: 확인 필요 -->
 <!-- 주 독자가 확정되면 설명 수준을 조정합니다. 현재 초안은 프로젝트를 처음 보는 개발자를 기준으로 작성했습니다. -->
@@ -10,6 +10,7 @@
 - **메인** — 서울 시간 기준 날짜·12시간제 시계·초, 오늘과 선택한 날짜의 일정을 표시합니다.
 - **캘린더와 시간표** — 일정 추가·수정·삭제, 공휴일 표시, 학기별 시간표를 제공합니다. 한 과목에 여러 수업 시간을 등록하고 시간별 강의실과 휴강일을 설정할 수 있습니다.
 - **iCloud 연동** — HTTPS 화면에서 Apple ID와 앱 전용 암호로 캘린더를 연결합니다. 일반 일정은 편집하고, 반복·여러 날·초대 일정은 조회합니다.
+- **바로가기** — 사이트 이름·URL을 분류별로 저장합니다. 분류 접기·펼치기, 드래그·키보드 정리와 서버 아이콘 캐시를 제공합니다.
 - **서버 대시보드** — Proxmox 호스트와 VM·LXC의 자원 사용량을 기간별 그래프로 표시합니다. 스토리지 현황과 호스트 센서 연동 시 CPU 온도를 확인할 수 있습니다.
 - **WOL** — PC 이름과 MAC 주소를 등록·수정·삭제하고 깨우기 패킷을 전송합니다. 전송 결과와 시각을 표시하며 같은 대상의 요청에는 10초 간격을 적용합니다.
 - **접속과 설정** — 허용한 네트워크에서 자동 입장하고, 그 외 접속에는 비밀번호 로그인을 적용합니다. 사이트 이름·캘린더 표시 선택을 저장하고, 기존 비밀번호 또는 등록한 Google OTP로 비밀번호를 변경할 수 있습니다.
@@ -18,7 +19,7 @@
 
 | 영역 | 기술 |
 |---|---|
-| 프론트엔드 | React, TypeScript, Vite, TanStack Router·Query, Tailwind CSS, Radix UI |
+| 프론트엔드 | React, TypeScript, Vite, TanStack Router·Query, Tailwind CSS, Radix UI, dnd-kit |
 | 백엔드 | Java 21, Spring Boot, Spring Security, Spring Data JPA, JdbcTemplate |
 | 데이터·연동 | MySQL 8.4, Flyway, iCloud CalDAV, ical4j, Proxmox API·SSH 센서 |
 | 검증·운영 | JUnit, H2, Vitest, Testing Library, GitHub Actions, Nginx, systemd |
@@ -108,19 +109,15 @@ curl --fail http://127.0.0.1:8080/api/health
 {"status":"ok"}
 ```
 
-실제 API를 사용하는 화면에는 프론트엔드와 API 경로를 같은 출처로 연결하는 웹 서버 설정이 필요합니다. 저장소의 운영용 Nginx 설정은 API 요청을 백엔드로 전달합니다. [Nginx 설정](FE/deploy/nginx.conf)
-
-<!-- TODO: 확인 필요 -->
-<!-- 현재 Vite 설정에는 API 프록시가 없습니다. 로컬에서 프론트엔드와 백엔드를 함께 실행할 때 사용할 연결 절차를 확정합니다. -->
-
-로컬 통합 실행의 API 연결 절차는 확인 후 보완할 예정입니다. 전체 환경변수와 백엔드 기능별 설정은 애플리케이션 설정 파일을 참고하세요. [애플리케이션 설정](BE/src/main/resources/application.properties)
+실제 API 모드에서는 웹 서버가 화면과 API를 같은 출처로 제공하도록 구성해야 합니다. Vite 개발 서버에는 API 프록시가 없으며, 운영 Nginx는 API 요청을 백엔드로 전달합니다. 배포 절차와 환경변수는 관련 문서에서 확인할 수 있습니다. [Nginx 설정](FE/deploy/nginx.conf) · [배포 안내](docs/deployment.md) · [애플리케이션 설정](BE/src/main/resources/application.properties)
 
 ### 5. 화면에서 연동 설정하기
 
 1. HTTPS로 제공되는 사이트의 캘린더에서 iCloud 설정을 엽니다.
 2. Apple ID와 앱 전용 암호를 입력하고 사용할 캘린더를 선택합니다.
 3. 시간표 설정에서 학기 기간과 과목별 수업 시간을 저장합니다.
-4. WOL 리스트 수정에서 대상 PC의 이름과 MAC 주소를 등록합니다.
+4. 바로가기 페이지의 추가 버튼에서 사이트 이름·URL을 저장하고 분류를 선택합니다. 정리 모드에서 위치를 바꾼 뒤 저장합니다.
+5. WOL 리스트 수정에서 대상 PC의 이름과 MAC 주소를 등록합니다.
 
 Proxmox 모니터링에는 서버의 API 토큰과 센서 설정이 필요합니다. 현재 배포 스크립트는 Proxmox·LXC 환경을 대상으로 하며, 실제 접속 주소와 자격 증명은 실행 환경에서 관리합니다. 기능 사용과 배포 복구 절차는 운영 문서에 정리되어 있습니다. [사용·운영 문서](docs/backend-operations.md) · [배포 스크립트](BE/deploy)
 
@@ -136,6 +133,7 @@ MyWorkspace/
 │   │   │   ├── timetable/           # 학기·과목·수업 시간
 │   │   │   ├── holiday/             # 공휴일 조회·갱신
 │   │   │   └── icloud/              # 연결·동기화·이벤트 변경·캐시
+│   │   ├── shortcuts/               # 바로가기·분류·아이콘 수집과 캐시
 │   │   ├── server/                  # Proxmox·센서·메트릭 이력
 │   │   ├── wol/                     # PC 목록·깨우기 패킷
 │   │   ├── settings/                # 사이트 설정
