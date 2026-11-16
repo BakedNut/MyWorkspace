@@ -529,8 +529,10 @@ class FrontendVerificationTest(unittest.TestCase):
             (dist / "assets/app.js").write_text('console.log("ready")')
             (dist / "assets/app.css").write_text('body { color: blue }')
             (dist / "entry").write_text('console.log("entry")')
+            (dist / "build-info.json").write_text('{"commit":"new"}')
             manifest = preview.frontend_manifest(dist)
             self.assertIn("/", manifest)
+            self.assertIn("/build-info.json", manifest)
             self.assertIn("/assets/app.js?v=1", manifest)
             self.assertIn("/assets/app.js", manifest)
             self.assertIn("/assets/app.css", manifest)
@@ -542,8 +544,8 @@ class FrontendVerificationTest(unittest.TestCase):
     def served_frontend(self, redirects=None, encodings=None, lengths=None):
         bodies = {"/": b'<script src="/assets/app.js"></script>',
                   "/assets/app.js": b'console.log("ready")',
-                  "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
-        media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript"}
+                  "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")', "/build-info.json": b'{"commit":"new"}'}
+        media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript", "/build-info.json": "application/json"}
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path in (redirects or {}):
@@ -569,7 +571,7 @@ class FrontendVerificationTest(unittest.TestCase):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript"}
+        kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript", "/build-info.json": "json"}
         expected = {path: {"sha256": hashlib.sha256(body).hexdigest(), "kind": kinds[path], "size": len(body)}
                     for path, body in bodies.items()}
         def local_run(ct, args, data=None):
@@ -581,6 +583,17 @@ class FrontendVerificationTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_stale_metadata_is_rejected_even_when_page_scripts_and_styles_match(self):
+        with self.served_frontend() as (bodies, media, expected):
+            preview.verify_frontend(expected)
+            bodies["/build-info.json"] = b'{"commit":"old"}'
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
+            bodies["/build-info.json"] = b'{"commit":"new"}'
+            media["/build-info.json"] = "text/html"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
 
     def test_web_page_and_script_must_be_served_with_expected_content(self):
         with self.served_frontend() as (bodies, media, expected):

@@ -74,7 +74,7 @@ def frontend_manifest(dist):
     index = dist / "index.html"
     parser = FrontendAssets()
     parser.feed(index.read_text())
-    files = {"/": (index, "html")}
+    files = {"/": (index, "html"), "/build-info.json": (dist / "build-info.json", "json")}
     for reference, kind in parser.urls:
         url = urlsplit(urljoin("/", reference))
         if url.scheme or url.netloc:
@@ -118,7 +118,7 @@ javascript_types = {
     'text/javascript1.3','text/javascript1.4','text/javascript1.5','text/jscript','text/livescript',
     'text/x-ecmascript','text/x-javascript'
 }
-allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
+allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types, 'json': {'application/json'}}
 utf8_labels = {'unicode-1-1-utf-8','unicode11utf8','unicode20utf8','utf-8','utf8','x-unicode20utf8'}
 for path,asset in json.loads(sys.argv[2]).items():
     with opener.open(sys.argv[1]+path,timeout=5) as response:
@@ -128,7 +128,7 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
-        if asset['kind'] in ('html','css'):
+        if asset['kind'] in ('html','css','json'):
             for header in headers:
                 parsed = email.message.Message()
                 parsed['Content-Type'] = header
