@@ -118,11 +118,11 @@ class PreviewDeploymentTest(unittest.TestCase):
             return ""
         self.run.side_effect = run
         self.ready.side_effect = [RuntimeError("readiness failed"), False]
-        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", None)
-        self.assertEqual(len(failures), 5)
+        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", None, "/checker.jar")
+        self.assertEqual(len(failures), 2)
         self.run.assert_any_call(200, ["ln", "-s", self.old_frontend, preview.FRONTEND + ".stamp-restore"])
-        self.run.assert_any_call(200, ["systemctl", "restart", "myworkspace-preview"])
-        self.assertEqual([call.args for call in self.ready.call_args_list], [(8081,), (8088,)])
+        self.run.assert_any_call(200, ["systemctl", "stop", "myworkspace-preview"])
+        self.ready.assert_not_called()
 
     def test_all_initial_service_states_install_guard_before_starting(self):
         for backend_active, web_active in [(False, False), (False, True), (True, False), (True, True)]:
@@ -170,9 +170,10 @@ class PreviewDeploymentTest(unittest.TestCase):
             for phase in ("reload", "readiness"):
                 with self.subTest(previous=previous, phase=phase):
                     self.run.reset_mock()
+                    self.guard.reset_mock()
                     self.private.reset_mock()
                     self.ready.side_effect = [False, True, True]
-                    self.guard.side_effect = RuntimeError("reload failed") if phase == "reload" else None
+                    self.guard.side_effect = [RuntimeError("reload failed"), None] if phase == "reload" else None
                     with patch.object(preview, "read_database_guard", return_value=previous):
                         with self.assertRaises(RuntimeError):
                             preview.deploy(self.root)
@@ -181,10 +182,9 @@ class PreviewDeploymentTest(unittest.TestCase):
                     else:
                         self.private.assert_called_once_with(200, preview.DATABASE_GUARD, previous, 0o600)
                     commands = [call.args[1] for call in self.run.call_args_list]
-                    self.assertIn(["systemctl", "daemon-reload"], commands)
-                    self.assertLess(commands.index(["systemctl", "daemon-reload"]),
-                                    max(index for index, command in enumerate(commands)
-                                        if command == ["systemctl", "restart", "myworkspace-preview"]))
+                    self.assertEqual(self.guard.call_count, 2)
+                    self.assertEqual(self.guard.call_args_list[0].args, self.guard.call_args_list[1].args)
+                    self.assertIn(["systemctl", "restart", "myworkspace-preview"], commands)
 
     def test_guard_backup_failure_aborts_before_changing_service_configuration(self):
         with patch.object(preview, "read_database_guard", side_effect=PermissionError("cannot read guard")):
@@ -196,9 +196,28 @@ class PreviewDeploymentTest(unittest.TestCase):
 
     def test_guard_restore_failure_is_reported_and_reload_is_still_attempted(self):
         self.private.side_effect = PermissionError("cannot restore guard")
-        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", "old guard")
+        failures = preview.restore(self.old_jar, self.old_frontend, "stamp", "old guard", "/checker.jar")
         self.assertEqual(failures, ["database guard: PermissionError"])
-        self.run.assert_any_call(200, ["systemctl", "daemon-reload"])
+        self.guard.assert_called_once_with("/checker.jar")
+        self.run.assert_any_call(200, ["systemctl", "stop", "myworkspace-preview"])
+
+    def test_rollback_guard_preparation_or_rejection_leaves_backend_stopped(self):
+        for prepare_fails in (False, True):
+            with self.subTest(prepare_fails=prepare_fails):
+                self.run.reset_mock()
+                self.guard.reset_mock()
+                self.guard.side_effect = RuntimeError("cannot install safety guard") if prepare_fails else None
+                def run(ct, args, data=None):
+                    if args == ["systemctl", "restart", "myworkspace-preview"]:
+                        raise subprocess.CalledProcessError(1, args)
+                    return self.server_run(ct, args, data)
+                self.run.side_effect = run
+                failures = preview.restore(self.old_jar, self.old_frontend, "stamp", None, "/checker.jar")
+                self.assertTrue(failures)
+                self.guard.assert_called_once_with("/checker.jar")
+                self.run.assert_any_call(200, ["systemctl", "stop", "myworkspace-preview"])
+                if prepare_fails:
+                    self.assertFalse(any(call.args[1] == ["systemctl", "restart", "myworkspace-preview"] for call in self.run.call_args_list))
 
     def test_success_checks_each_service_and_the_web_endpoint(self):
         preview.deploy(self.root)
@@ -511,7 +530,7 @@ class PreviewDatabaseGuardTest(unittest.TestCase):
             preview.configure_database_guard(jar)
             ct, path, content, mode = write.call_args.args
             self.assertEqual(ct, 200)
-            self.assertIn("myworkspace-preview.service.d/", path)
+            self.assertEqual(path, preview.DATABASE_SAFETY_GUARD)
             self.assertIn('ExecStartPre="/usr/bin/java"', content)
             self.assertIn("PreviewDatabaseCheck", content)
             self.assertIn(jar, content)
@@ -542,6 +561,30 @@ class PreviewDatabaseGuardTest(unittest.TestCase):
                     preview.configure_database_guard("/new.jar")
                 write.assert_not_called()
                 self.assertEqual(run.call_count, 2)
+
+
+class PreviewPackagedConfigurationTest(unittest.TestCase):
+    def test_runtime_configuration_must_match_checker_including_profile_and_imported_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checker, runtime = root / "checker.jar", root / "runtime.jar"
+            def jar(path, configs, commit):
+                with zipfile.ZipFile(path, "w") as archive:
+                    for name, value in configs.items():
+                        archive.writestr("BOOT-INF/classes/" + name, value)
+                    archive.writestr("BOOT-INF/classes/git.properties", commit)
+            baseline = {"application.properties": "spring.datasource.url=${DB_URL}"}
+            jar(checker, baseline, "new")
+            jar(runtime, baseline, "old")
+            command = ["python3", "-c", preview.DATABASE_CONFIG_CHECK, str(checker), str(runtime)]
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            for name in ("application.properties", "application-preview.yaml", "custom.yml"):
+                changed = dict(baseline)
+                changed[name] = "spring.datasource.url=jdbc:mysql://production/myworkspace"
+                jar(runtime, changed, "old")
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("configuration differ", result.stderr)
 
 
 class PreviewReadinessTest(unittest.TestCase):
