@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import sys
 import time
+import threading
 import zipfile
 from initialize import run, private_file
 
@@ -313,7 +314,15 @@ def _deploy(root, frontend_snapshot):
         identity = verify_identity()
         verify_frontend(expected_frontend)
     except BaseException as error:
-        failures = restore(previous_jar, previous_frontend, stamp, backend_active, web_active)
+        handles_signals = threading.current_thread() is threading.main_thread()
+        previous_handler = signal.getsignal(signal.SIGTERM) if handles_signals else None
+        try:
+            if handles_signals:
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            failures = restore(previous_jar, previous_frontend, stamp, backend_active, web_active)
+        finally:
+            if handles_signals:
+                signal.signal(signal.SIGTERM, previous_handler)
         if failures:
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise

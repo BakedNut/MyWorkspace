@@ -220,6 +220,16 @@ class PreviewDeploymentTest(unittest.TestCase):
             first.result(timeout=5)
         self.private.assert_called_once()
 
+    def test_failed_worker_deployment_restores_without_changing_main_signal_handler(self):
+        self.ready.side_effect = [False, True, True]
+        previous = preview.signal.getsignal(preview.signal.SIGTERM)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(preview.deploy, self.root)
+            with self.assertRaisesRegex(RuntimeError, "backend did not become ready"):
+                result.result(timeout=5)
+        self.assert_restored()
+        self.assertEqual(preview.signal.getsignal(preview.signal.SIGTERM), previous)
+
     def test_lock_is_released_after_a_failed_deployment_and_rollback(self):
         self.ready.side_effect = [False, True, True]
         with self.assertRaisesRegex(RuntimeError, "backend did not become ready"):
