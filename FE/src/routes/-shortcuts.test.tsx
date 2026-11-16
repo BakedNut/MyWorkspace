@@ -1485,3 +1485,27 @@ it("반복 충돌에서 이미 자동 배치한 분류를 보존하고 저장한
   expect(persisted.groups.find((group) => group.id === "b")!.links).toEqual([x]);
   expect(persisted.groups.find((group) => group.id === "a")!.name).toBe("서버 이름 변경");
 });
+
+it("저장 충돌 후 정리를 취소하면 최신 목록과 revision으로 다시 시작한다", async () => {
+  const latest = structuredClone(initial);
+  latest.revision += 1;
+  latest.groups[0]!.links.push({ id: "remote", name: "다른 탭 추가", url: "https://example.com/" });
+  vi.mocked(api.shortcuts.get)
+    .mockResolvedValueOnce(structuredClone(initial))
+    .mockResolvedValue(latest);
+  const save = vi
+    .spyOn(api.shortcuts, "save")
+    .mockRejectedValueOnce(new ApiError("다른 탭의 변경", "CONFLICT"))
+    .mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
+  setup();
+  await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await screen.findByRole("button", { name: "최신 변경과 합치기" });
+  fireEvent.click(screen.getByRole("button", { name: "취소" }));
+  await screen.findByRole("link", { name: "다른 탭 추가 새 탭에서 열기" });
+  fireEvent.click(screen.getByRole("button", { name: "정리" }));
+  fireEvent.click(screen.getByRole("button", { name: "저장" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[1]![0].revision).toBe(latest.revision);
+});
