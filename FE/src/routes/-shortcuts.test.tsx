@@ -1509,3 +1509,64 @@ it("저장 충돌 후 정리를 취소하면 최신 목록과 revision으로 다
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   expect(save.mock.calls[1]![0].revision).toBe(latest.revision);
 });
+
+it.each(
+  ["link", "group"].flatMap((kind) =>
+    ["cancel", "escape"].flatMap((action) =>
+      [false, true].map((committed) => ({ kind, action, committed })),
+    ),
+  ),
+)(
+  "불확실한 추가 창 종료 시 최신 목록을 조회한다 $kind / $action / 저장 $committed",
+  async ({ kind, action, committed }) => {
+    let server = structuredClone(initial);
+    vi.mocked(api.shortcuts.get).mockImplementation(async () => structuredClone(server));
+    let calls = 0;
+    const save = vi.spyOn(api.shortcuts, "save").mockImplementation(async (input) => {
+      calls++;
+      if (calls === 1) {
+        if (committed) server = structuredClone({ ...input, revision: input.revision + 1 });
+        throw new ApiError("응답 유실", "NETWORK");
+      }
+      if (input.revision !== server.revision) throw new ApiError("충돌", "CONFLICT");
+      server = structuredClone({ ...input, revision: input.revision + 1 });
+      return structuredClone(server);
+    });
+    setup();
+    await screen.findByRole("link", { name: "GitHub 새 탭에서 열기" });
+    const buttonName = kind === "link" ? "추가" : "분류 추가";
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    let modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "불확실한 생성" } });
+    if (kind === "link")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.com/" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await within(modal).findByText("응답 유실");
+    if (action === "cancel") fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+    else fireEvent.keyDown(modal, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(api.shortcuts.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: buttonName })).toBeEnabled());
+    if (committed) {
+      if (kind === "link")
+        expect(
+          screen.getByRole("link", { name: "불확실한 생성 새 탭에서 열기" }),
+        ).toBeInTheDocument();
+      else expect(screen.getByRole("button", { name: "불확실한 생성 0" })).toBeInTheDocument();
+    }
+    const revision = server.revision;
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    modal = screen.getByRole("dialog");
+    fireEvent.change(within(modal).getByLabelText("이름"), { target: { value: "후속 생성" } });
+    if (kind === "link")
+      fireEvent.change(within(modal).getByLabelText("URL"), {
+        target: { value: "https://example.org/" },
+      });
+    fireEvent.click(within(modal).getByRole("button", { name: "완료" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]![0].revision).toBe(revision);
+  },
+);
