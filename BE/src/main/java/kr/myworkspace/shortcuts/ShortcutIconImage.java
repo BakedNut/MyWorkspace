@@ -113,15 +113,13 @@ final class ShortcutIconImage {
           if (width < 8 || height < 8 || width > 2048 || height > 2048) return null;
           var image = reader.read(index);
           if (image == null) return null;
-          boolean visible = false, varied = false;
-          int first = image.getRGB(0, 0);
-          for (int y = 0; y < height && !(visible && varied); y++)
-            for (int x = 0; x < width && !(visible && varied); x++) {
+          boolean visible = false;
+          for (int y = 0; y < height && !visible; y++)
+            for (int x = 0; x < width && !visible; x++) {
               int pixel = image.getRGB(x, y);
               visible |= (pixel >>> 24) != 0;
-              varied |= pixel != first;
             }
-          if (!visible || !varied) return null;
+          if (!visible) return null;
           var normalized = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
           var graphics = normalized.createGraphics();
           try {
