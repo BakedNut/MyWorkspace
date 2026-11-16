@@ -37,6 +37,7 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.mock("subprocess.check_output", return_value="commit")
         self.private = self.mock("private_file")
         self.ready = self.mock("ready", return_value=True)
+        self.guard = self.mock("configure_database_guard")
         self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
     def frontend_build(self, commit="commit", dirty=False):
@@ -142,6 +143,8 @@ class PreviewDeploymentTest(unittest.TestCase):
             self.run.assert_any_call(200, ["systemctl", "is-active", "--quiet", service])
         self.assertEqual([call.args for call in self.ready.call_args_list], [(), (8088,)])
         self.private.assert_called_once()
+        self.guard.assert_called_once()
+        self.assertNotIn("current.jar", self.guard.call_args.args[0])
 
     def test_server_receipt_failure_reports_active_release_and_still_writes_local_receipt(self):
         self.private.side_effect = OSError("disk full")
@@ -415,6 +418,22 @@ class PreviewDeploymentTest(unittest.TestCase):
             self.run.assert_not_called()
 
 
+class PreviewDatabaseGuardTest(unittest.TestCase):
+    def test_installs_prestart_check_from_the_new_jar_before_reload(self):
+        jar = "/opt/myworkspace-preview/releases/new.jar"
+        with patch.object(preview, "private_file") as write, patch.object(preview, "run") as run:
+            preview.configure_database_guard(jar)
+            ct, path, content, mode = write.call_args.args
+            self.assertEqual(ct, 200)
+            self.assertIn("myworkspace-preview.service.d/", path)
+            self.assertIn("ExecStartPre=/usr/bin/java", content)
+            self.assertIn("PreviewDatabaseCheck", content)
+            self.assertIn(jar, content)
+            self.assertNotIn("current.jar", content)
+            self.assertEqual(mode, 0o644)
+            run.assert_called_once_with(200, ["systemctl", "daemon-reload"])
+
+
 class PreviewReadinessTest(unittest.TestCase):
     def test_checks_requested_web_port(self):
         with patch.object(preview, "run", return_value='{"status":"ok"}') as run:
@@ -510,8 +529,10 @@ class FrontendVerificationTest(unittest.TestCase):
             (dist / "assets/app.js").write_text('console.log("ready")')
             (dist / "assets/app.css").write_text('body { color: blue }')
             (dist / "entry").write_text('console.log("entry")')
+            (dist / "build-info.json").write_text('{"commit":"new"}')
             manifest = preview.frontend_manifest(dist)
             self.assertIn("/", manifest)
+            self.assertIn("/build-info.json", manifest)
             self.assertIn("/assets/app.js?v=1", manifest)
             self.assertIn("/assets/app.js", manifest)
             self.assertIn("/assets/app.css", manifest)
@@ -523,8 +544,8 @@ class FrontendVerificationTest(unittest.TestCase):
     def served_frontend(self, redirects=None, encodings=None, lengths=None):
         bodies = {"/": b'<script src="/assets/app.js"></script>',
                   "/assets/app.js": b'console.log("ready")',
-                  "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")'}
-        media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript"}
+                  "/assets/app.css": b'body { color: blue }', "/entry": b'console.log("entry")', "/build-info.json": b'{"commit":"new"}'}
+        media = {"/": "text/html", "/assets/app.js": "text/javascript", "/assets/app.css": "text/css", "/entry": "text/javascript", "/build-info.json": "application/json"}
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path in (redirects or {}):
@@ -550,7 +571,7 @@ class FrontendVerificationTest(unittest.TestCase):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript"}
+        kinds = {"/": "html", "/assets/app.css": "css", "/assets/app.js": "javascript", "/entry": "javascript", "/build-info.json": "json"}
         expected = {path: {"sha256": hashlib.sha256(body).hexdigest(), "kind": kinds[path], "size": len(body)}
                     for path, body in bodies.items()}
         def local_run(ct, args, data=None):
@@ -562,6 +583,17 @@ class FrontendVerificationTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_stale_metadata_is_rejected_even_when_page_scripts_and_styles_match(self):
+        with self.served_frontend() as (bodies, media, expected):
+            preview.verify_frontend(expected)
+            bodies["/build-info.json"] = b'{"commit":"old"}'
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
+            bodies["/build-info.json"] = b'{"commit":"new"}'
+            media["/build-info.json"] = "text/html"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.verify_frontend(expected)
 
     def test_web_page_and_script_must_be_served_with_expected_content(self):
         with self.served_frontend() as (bodies, media, expected):

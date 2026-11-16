@@ -172,7 +172,7 @@ function ShortcutsPage() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => {
-                  if (uncertainOrganize.current.length)
+                  if (conflict || uncertainOrganize.current.length)
                     void queryClient.invalidateQueries({ queryKey });
                   uncertainOrganize.current = [];
                   setDraft(null);

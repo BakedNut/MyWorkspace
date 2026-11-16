@@ -74,7 +74,7 @@ def frontend_manifest(dist):
     index = dist / "index.html"
     parser = FrontendAssets()
     parser.feed(index.read_text())
-    files = {"/": (index, "html")}
+    files = {"/": (index, "html"), "/build-info.json": (dist / "build-info.json", "json")}
     for reference, kind in parser.urls:
         url = urlsplit(urljoin("/", reference))
         if url.scheme or url.netloc:
@@ -118,7 +118,7 @@ javascript_types = {
     'text/javascript1.3','text/javascript1.4','text/javascript1.5','text/jscript','text/livescript',
     'text/x-ecmascript','text/x-javascript'
 }
-allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types}
+allowed_types = {'html': {'text/html'}, 'css': {'text/css'}, 'javascript': javascript_types, 'json': {'application/json'}}
 utf8_labels = {'unicode-1-1-utf-8','unicode11utf8','unicode20utf8','utf-8','utf8','x-unicode20utf8'}
 for path,asset in json.loads(sys.argv[2]).items():
     with opener.open(sys.argv[1]+path,timeout=5) as response:
@@ -128,7 +128,7 @@ for path,asset in json.loads(sys.argv[2]).items():
         media_type = headers[-1].split(';',1)[0].strip().lower() if headers else ''
         if media_type not in allowed_types[asset['kind']]:
             raise RuntimeError('Invalid Content-Type for '+asset['kind']+': '+path)
-        if asset['kind'] in ('html','css'):
+        if asset['kind'] in ('html','css','json'):
             for header in headers:
                 parsed = email.message.Message()
                 parsed['Content-Type'] = header
@@ -232,6 +232,16 @@ def deploy(root=None):
             _deploy(root, Path(directory) / "frontend")
 
 
+def configure_database_guard(jar):
+    # Keep the new checker independent of current.jar so rollback also runs it.
+    command = ("/usr/bin/java -Xms16m -Xmx64m -XX:MaxMetaspaceSize=96m "
+               "-Dloader.main=kr.myworkspace.common.database.PreviewDatabaseCheck "
+               f"-cp {jar} org.springframework.boot.loader.launch.PropertiesLauncher")
+    private_file(200, "/etc/systemd/system/myworkspace-preview.service.d/database-check.conf",
+                 "[Service]\nExecStartPre=" + command + "\n", 0o644)
+    run(200, ["systemctl", "daemon-reload"])
+
+
 def _deploy(root, frontend_snapshot):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
     jar = root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
@@ -269,6 +279,7 @@ def _deploy(root, frontend_snapshot):
             subprocess.run(["pct", "push", "200", str(path), destination, "--perms", "0644"], capture_output=True, check=True)
             if run(200, ["sha256sum", destination]).split()[0] != frontend_hashes[path.relative_to(dist)]:
                 raise RuntimeError("Uploaded frontend checksum mismatch")
+    configure_database_guard(target)
     try:
         replace(target, JAR, stamp)
         run(200, ["systemctl", "restart", "myworkspace-preview"])
