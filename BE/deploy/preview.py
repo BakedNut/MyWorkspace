@@ -24,6 +24,7 @@ FRONTEND_VERIFY_SECONDS = 30
 LOCK_PATH = Path("/root/.local/state/myworkspace/preview-deploy.lock")
 JAR = "/opt/myworkspace-preview/current.jar"
 FRONTEND = "/var/www/myworkspace-preview/current"
+BACKUP_DIRECTORY = Path("/root/.local/state/myworkspace/preview-backups")
 
 
 def ready(port=8081):
@@ -166,6 +167,8 @@ def build_metadata(root, jar, dist):
         if backend_dirty not in ("true", "false") or type(frontend["dirty"]) is not bool:
             raise ValueError("Invalid build flags")
         frontend_commit = frontend["commit"]
+        if frontend.get("apiMode") != "rest":
+            raise ValueError("Preview deployment requires a real API frontend build")
         files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
         if frontend["files"] != files:
@@ -175,24 +178,47 @@ def build_metadata(root, jar, dist):
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     if backend_commit != commit or frontend_commit != commit:
         raise ValueError("Build commit does not match current checkout; rebuild BE and FE")
-    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"],
+    return dict(commit=commit, backendDirty=backend_dirty == "true", frontendDirty=frontend["dirty"], frontendApiMode=frontend["apiMode"],
                 backendSha256=hashlib.sha256(jar_bytes).hexdigest())
 
 
-def backup(stamp):
-    directory = Path("/root/.local/state/myworkspace/preview-backups")
+def backup(stamp, jar):
+    directory = BACKUP_DIRECTORY
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = directory / ("myworkspace-preview-" + stamp + ".sql.gz")
     dump = run(202, ["mysqldump", "--defaults-extra-file=/root/.myworkspace.cnf", "--single-transaction", "--no-tablespaces", "--set-gtid-purged=OFF", "--column-statistics=0", "--hex-blob", "myworkspace_preview"])
-    target.write_bytes(gzip.compress(dump.encode()))
-    target.chmod(0o600)
-    key = run(200, ["python3", "-c", "from pathlib import Path;import os;p=Path('/var/lib/myworkspace-preview/icloud-master.key');fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW) if p.exists() else None;print(os.read(fd,33).hex() if fd is not None else '');fd is not None and os.close(fd)"]).strip()
-    if key:
+    mysql = ["mysql", "--defaults-extra-file=/root/.myworkspace.cnf", "--batch", "--skip-column-names", "-e"]
+    table = run(202, [*mysql, "SELECT COUNT(*) FROM information_schema.tables WHERE "
+                     "table_schema='myworkspace_preview' AND table_name='app_document';"]).strip()
+    if table not in ("0", "1"):
+        raise RuntimeError("Cannot inspect preview backup schema")
+    required = "0"
+    if table == "1":
+        required = run(202, [*mysql,
+            "SELECT COUNT(*) FROM myworkspace_preview.app_document WHERE "
+            "(id='icloud' AND JSON_TYPE(JSON_EXTRACT(payload,'$.encryptedCredentials'))='STRING') OR "
+            "(id='security-settings' AND (JSON_TYPE(JSON_EXTRACT(payload,'$.otpSecret'))='STRING' OR "
+            "JSON_TYPE(JSON_EXTRACT(payload,'$.pendingSecret'))='STRING'));" ]).strip()
+    if not required.isdecimal():
+        raise RuntimeError("Cannot determine whether preview encryption keys are required")
+    program = Path(__file__).with_name("preview_key.py").read_text()
+    key = run(200, ["python3", "-c", program, jar]).strip()
+    try:
         value = bytes.fromhex(key)
-        if len(value) != 32:
-            raise RuntimeError("Invalid preview encryption key")
-        target.with_suffix(".key").write_bytes(value)
-        target.with_suffix(".key").chmod(0o600)
+    except ValueError:
+        raise RuntimeError("Invalid preview encryption key") from None
+    if (value and len(value) != 32) or (int(required) and not value):
+        raise RuntimeError("Preview backup requires the service encryption key")
+    with tempfile.TemporaryDirectory(prefix="key-backup-", dir=directory) as temporary:
+        staged = Path(temporary) / "database.sql.gz"
+        staged.write_bytes(gzip.compress(dump.encode()))
+        staged.chmod(0o600)
+        if value:
+            staged_key = Path(temporary) / "database.key"
+            staged_key.write_bytes(value)
+            staged_key.chmod(0o600)
+            staged_key.replace(target.with_suffix(".key"))
+        staged.replace(target)
     return target
 
 
@@ -281,13 +307,13 @@ def _deploy(root, frontend_snapshot):
     web_active = service_active("myworkspace-preview-web")
     commit = build["commit"]
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    snapshot = backup(stamp)
     release = "preview-" + commit[:12] + "-" + stamp
     target = "/opt/myworkspace-preview/releases/" + release + ".jar"
     frontend = "/var/www/myworkspace-preview/releases/" + release
     subprocess.run(["pct", "push", "200", str(jar), target, "--perms", "0644"], capture_output=True, check=True)
     if run(200, ["sha256sum", target]).split()[0] != build["backendSha256"]:
         raise RuntimeError("Uploaded JAR checksum mismatch")
+    snapshot = backup(stamp, target)
     run(200, ["install", "-d", "-m", "755", frontend])
     for path in dist.rglob("*"):
         destination = frontend + "/" + str(path.relative_to(dist))

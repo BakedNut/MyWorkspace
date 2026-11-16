@@ -15,6 +15,8 @@ npm run lint
 npm run build
 ```
 
+빌드 메타데이터의 apiMode는 실제 적용된 rest·mock 모드를 기록합니다. 테스트 배포는 rest 빌드를 사용합니다.
+
 기본 모드는 실제 API를 사용합니다. 백엔드 없이 화면을 확인하려면 `VITE_API_MODE=mock npm run dev`를 사용합니다. 시안 API는 실제 인증이나 장치 제어를 수행하지 않습니다.
 
 ## 캘린더

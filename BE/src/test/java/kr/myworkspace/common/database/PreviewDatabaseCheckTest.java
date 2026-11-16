@@ -41,6 +41,41 @@ class PreviewDatabaseCheckTest {
   }
 
   @Test
+  void rejectsNonPreviewDefaultOrManagedSchemasBeforeMigrations() throws Exception {
+    for (String property :
+        new String[] {
+          "spring.flyway.default-schema", "spring.flyway.schemas", "spring.flyway.schemas[0]"
+        }) {
+      var settings =
+          environment("myworkspace_preview", "myworkspace_preview")
+              .withProperty(property, "myworkspace");
+      assertThatThrownBy(() -> PreviewDatabaseCheck.verify(settings))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Flyway schemas");
+    }
+    var fromEnvironment = environment("myworkspace_preview", "myworkspace_preview");
+    fromEnvironment
+        .getPropertySources()
+        .addFirst(
+            new org.springframework.core.env.SystemEnvironmentPropertySource(
+                "systemEnvironment",
+                java.util.Map.of("SPRING_FLYWAY_DEFAULT_SCHEMA", "myworkspace")));
+    assertThatThrownBy(() -> PreviewDatabaseCheck.verify(fromEnvironment))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Flyway schemas");
+    var valid =
+        environment("myworkspace_preview", "myworkspace_preview")
+            .withProperty("spring.flyway.default-schema", "myworkspace_preview")
+            .withProperty("spring.flyway.schemas", "myworkspace_preview");
+    PreviewDatabaseCheck.verify(valid);
+    var mixed =
+        environment("myworkspace_preview", "myworkspace_preview")
+            .withProperty("spring.flyway.schemas", "myworkspace_preview,myworkspace");
+    assertThatThrownBy(() -> PreviewDatabaseCheck.verify(mixed))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void standaloneBootstrapRejectsProductionBeforeCreatingMigrationTables() {
     assertThatThrownBy(
             () ->

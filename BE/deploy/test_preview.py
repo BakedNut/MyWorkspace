@@ -40,11 +40,11 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.guard = self.mock("configure_database_guard")
         self.identity = self.mock("verify_identity", return_value={"instance": "preview", "previewDatabase": True})
 
-    def frontend_build(self, commit="commit", dirty=False):
+    def frontend_build(self, commit="commit", dirty=False, api_mode="rest"):
         dist = self.root / "FE/dist"
         files = {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in dist.rglob("*") if path.is_file() and path != dist / "build-info.json"}
-        (dist / "build-info.json").write_text(json.dumps(dict(commit=commit, dirty=dirty, files=files)))
+        (dist / "build-info.json").write_text(json.dumps(dict(commit=commit, dirty=dirty, apiMode=api_mode, files=files)))
 
     def mock(self, name, **options):
         patcher = patch("preview." + name, **options)
@@ -286,6 +286,16 @@ class PreviewDeploymentTest(unittest.TestCase):
                 self.backup.assert_not_called()
                 self.private.assert_not_called()
 
+    def test_mock_missing_or_unknown_api_mode_aborts_before_server_access(self):
+        for mode in ("mock", "unknown", None):
+            with self.subTest(mode=mode):
+                self.frontend_build(api_mode=mode)
+                with self.assertRaisesRegex(ValueError, "Build metadata"):
+                    preview.deploy(self.root)
+                self.run.assert_not_called()
+                self.backup.assert_not_called()
+                self.push.assert_not_called()
+
     def test_missing_build_metadata_aborts_before_server_operations(self):
         (self.root / "FE/dist/build-info.json").unlink()
         with self.assertRaises(ValueError):
@@ -302,18 +312,21 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertFalse(receipt["backendDirty"])
         self.assertTrue(receipt["frontendDirty"])
 
-    def test_jar_rebuild_during_backup_aborts_before_activation(self):
-        def rebuild(stamp):
-            jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
-            with zipfile.ZipFile(jar, "w") as archive:
-                archive.writestr("BOOT-INF/classes/git.properties", "git.commit.id.full=other\ngit.dirty=false\n")
+    def test_jar_rebuild_during_backup_keeps_the_verified_uploaded_artifact(self):
+        jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
+        original = jar.read_bytes()
+        def rebuild(stamp, target):
+            jar.write_bytes(b"rebuilt local jar")
             return Path("/tmp/preview.sql.gz")
+        def run(ct, args, data=None):
+            if args[0] == "sha256sum" and args[1].endswith(".jar"):
+                return hashlib.sha256(original).hexdigest() + " file"
+            return self.server_run(ct, args, data)
         self.backup.side_effect = rebuild
-        with self.assertRaisesRegex(RuntimeError, "JAR checksum"):
-            preview.deploy(self.root)
-        self.private.assert_not_called()
-        commands = [call.args[1] for call in self.run.call_args_list]
-        self.assertFalse(any(args[0] == "ln" for args in commands))
+        self.run.side_effect = run
+        preview.deploy(self.root)
+        receipt = json.loads(self.private.call_args.args[2])
+        self.assertEqual(receipt["backendSha256"], hashlib.sha256(original).hexdigest())
 
     def test_jar_rebuild_after_upload_keeps_the_verified_artifact_hash(self):
         jar = self.root / "BE/target/myworkspace-0.0.1-SNAPSHOT.jar"
@@ -356,7 +369,7 @@ class PreviewDeploymentTest(unittest.TestCase):
                     (dist / "removed.txt").unlink()
                     (dist / "new.txt").write_text("new file")
 
-                def backup(stamp):
+                def backup(stamp, jar=None):
                     if timing == "backup":
                         rebuild()
                     return Path("/tmp/preview.sql.gz")

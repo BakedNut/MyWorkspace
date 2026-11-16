@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 
-let buildInfo: { commit: string; dirty: boolean };
+let buildInfo: { commit: string; dirty: boolean; apiMode: "mock" | "rest" };
+let apiMode: "mock" | "rest";
 let publicDirectory: string | false;
 let publicFiles: Record<string, string>;
 
@@ -22,13 +23,15 @@ export default defineConfig({
       apply: "build",
       configResolved(config) {
         publicDirectory = config.build.copyPublicDir && config.publicDir;
+        apiMode =
+          config.env["VITE_API_MODE"] === "mock" || config.env["MODE"] === "test" ? "mock" : "rest";
       },
       buildStart() {
         const cwd = fileURLToPath(new URL("..", import.meta.url));
         const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
         const dirty =
           execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" }).trim() !== "";
-        buildInfo = { commit, dirty };
+        buildInfo = { commit, dirty, apiMode };
         publicFiles = {};
         if (publicDirectory && existsSync(publicDirectory)) {
           for (const name of readdirSync(publicDirectory, { recursive: true, encoding: "utf8" })) {
