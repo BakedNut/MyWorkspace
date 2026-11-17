@@ -59,6 +59,17 @@ systemctl daemon-reload
 systemctl enable --now myworkspace-backup.timer
 ```
 
+설치된 백업 도구의 수용 검증은 아래 명령으로 수행합니다. 복원 대상은 스크립트가 생성·삭제하는 myworkspace_restore_* 임시 DB입니다. 서비스는 oneshot이므로 정상 완료 후에도 inactive일 수 있으며 Result=success와 ExecMainStatus=0, 성공 로그 및 생성된 SQL·키 쌍을 함께 확인합니다. 암호화 설정이 없는 DB는 키 파일 없이 복원 검증할 수 있습니다.
+
+```sh
+systemctl start myworkspace-backup.service
+systemctl show myworkspace-backup.service -p ActiveState -p Result -p ExecMainStatus
+journalctl -u myworkspace-backup.service -n 30 --no-pager
+python3 /usr/local/sbin/myworkspace-backup.py --verify
+```
+
+패키징 회귀 테스트는 문서와 같은 임시 usr/local/sbin·usr/local/share·etc/systemd/system 배치에서 인접 헬퍼와 JAR 조회, 복원 암호 인증, 파일 누락 시 기존 백업 보존을 확인합니다. 실제 서비스 실행 결과는 검증한 배포 리비전별 PR에 기록합니다.
+
 운영 배포 스크립트는 새 JAR·FE를 준비하고 Nginx 설정을 검사한 뒤 버전을 전환합니다. 백엔드의 정상 시작을 확인한 후 FE 링크와 Nginx를 갱신합니다. 기존 서비스 활성·자동 시작 상태, JAR·FE 링크와 설정을 기록해 실패 시 복구합니다. 복구 실패 시 예외에 표시된 임시 경로에 자료를 보존합니다. [운영 배포 코드](../BE/deploy/deploy.py)
 
 배포 후 서비스를 점검합니다.
