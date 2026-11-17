@@ -167,7 +167,59 @@ class ShortcutIconFetcherTest {
       assertThat(icon.mediaType()).isEqualTo("image/svg+xml");
       assertThat(requests)
           .contains("redirect.test:" + port + "/favicon.ico")
-          .doesNotContain("original.test:" + port + "/favicon.ico");
+          .contains("original.test:" + port + "/favicon.ico");
+    } finally {
+      fetcher.close();
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void fastDefaultFaviconIsFetchedBeforeTheSlowHomepage() throws Exception {
+    var requests = new CopyOnWriteArrayList<String>();
+    var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          String path = exchange.getRequestURI().getPath();
+          requests.add(path);
+          try {
+            if (path.equals("/")) Thread.sleep(8500);
+            byte[] body =
+                "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0 L10 10'/></svg>"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+              output.write(body);
+            }
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+          } finally {
+            exchange.close();
+          }
+        });
+    var fetcher =
+        new ShortcutIconFetcher("") {
+          @Override
+          DnsResolver resolver(URI source, long deadline) {
+            return new DnsResolver() {
+              public InetAddress[] resolve(String host) {
+                return new InetAddress[] {InetAddress.getLoopbackAddress()};
+              }
+
+              public String resolveCanonicalHostname(String host) {
+                return host;
+              }
+            };
+          }
+        };
+    server.start();
+    try {
+      assertThat(
+              fetcher.fetch(
+                  URI.create("http://fixture.test:" + server.getAddress().getPort() + "/")))
+          .isNotNull();
+      assertThat(requests).containsExactly("/favicon.ico");
     } finally {
       fetcher.close();
       server.stop(0);

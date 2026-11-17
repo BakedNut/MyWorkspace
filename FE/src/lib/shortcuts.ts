@@ -65,18 +65,35 @@ function mergeShortcutOrder(
   ids: string[],
   locallyPlacedIds: ReadonlySet<string> = new Set(),
 ): string[] {
-  const following = new Map(ids.map((id) => [id, new Set<string>()]));
+  const positions = new Map(ids.map((id, index) => [id, index]));
+  const present = (items: string[]) => items.filter((id) => positions.has(id));
+  const local = present(draft);
+  const remote = present(latest);
+  if (
+    locallyPlacedIds.size === 0 &&
+    local.length === base.length &&
+    local.every((id, index) => id === base[index]) &&
+    remote.length === ids.length
+  )
+    return remote;
+  const wordCount = Math.ceil(ids.length / 32);
+  const following = ids.map(() => new Uint32Array(wordCount));
+  const wordIndices = ids.map((_, index) => Math.floor(index / 32));
+  const bitMasks = ids.map((_, index) => 1 << (index % 32));
+  const edges = ids.map(() => new Set<number>());
+  const incoming = ids.map(() => 0);
   const original = new Map(base.map((id, index) => [id, index]));
   const constrain = (
     items: string[],
     changesOnly: boolean,
     placedIds: ReadonlySet<string> = new Set(),
+    collectInversions = false,
   ) => {
-    const present = items.filter((id) => following.has(id));
-    for (let left = 0; left < present.length; left++) {
-      for (let right = left + 1; right < present.length; right++) {
-        const before = present[left]!;
-        const after = present[right]!;
+    const ordered = present(items);
+    for (let left = 0; left < ordered.length; left++) {
+      for (let right = left + 1; right < ordered.length; right++) {
+        const before = ordered[left]!;
+        const after = ordered[right]!;
         if (
           changesOnly &&
           !placedIds.has(before) &&
@@ -86,27 +103,62 @@ function mergeShortcutOrder(
             original.get(before)! < original.get(after)!)
         )
           continue;
-        if (following.get(before)!.has(after) || following.get(after)!.has(before)) continue;
-        const successors = [after, ...following.get(after)!];
-        for (const [id, reachable] of following) {
-          if (id === before || reachable.has(before)) {
-            for (const next of successors) reachable.add(next);
+        const from = positions.get(before)!;
+        const to = positions.get(after)!;
+        if (collectInversions) {
+          if (!edges[from]!.has(to)) {
+            edges[from]!.add(to);
+            incoming[to]!++;
+          }
+          continue;
+        }
+        const fromWord = wordIndices[from]!;
+        const toWord = wordIndices[to]!;
+        if (
+          following[from]![toWord]! & bitMasks[to]! ||
+          following[to]![fromWord]! & bitMasks[from]!
+        )
+          continue;
+        edges[from]!.add(to);
+        incoming[to]!++;
+        const successors = following[to]!.slice();
+        successors[toWord] = successors[toWord]! | bitMasks[to]!;
+        for (let index = 0; index < ids.length; index++) {
+          const reachable = following[index]!;
+          if (index === from || reachable[fromWord]! & bitMasks[from]!) {
+            for (let word = 0; word < wordCount; word++)
+              reachable[word] = reachable[word]! | successors[word]!;
           }
         }
       }
     }
   };
-  constrain(draft, true, locallyPlacedIds);
-  constrain(latest, true);
+  const batchInversions = locallyPlacedIds.size === 0;
+  constrain(draft, true, locallyPlacedIds, batchInversions);
+  constrain(latest, true, new Set(), batchInversions);
+  if (batchInversions) {
+    // Inversions all point toward lower base positions, so one ordered pass is sufficient.
+    for (const id of base) {
+      const from = positions.get(id);
+      if (from === undefined) continue;
+      const reachable = following[from]!;
+      for (const next of edges[from]!) {
+        const word = wordIndices[next]!;
+        reachable[word] = reachable[word]! | bitMasks[next]!;
+        for (let index = 0; index < wordCount; index++)
+          reachable[index] = reachable[index]! | following[next]![index]!;
+      }
+    }
+  }
   constrain(latest, false);
   constrain(draft, false);
-  const remaining = [...new Set([...latest, ...draft, ...ids])].filter((id) => following.has(id));
+  const remaining = [...new Set([...latest, ...draft, ...ids])].filter((id) => positions.has(id));
   const order: string[] = [];
   while (remaining.length) {
-    const index = remaining.findIndex(
-      (id) => !remaining.some((other) => following.get(other)!.has(id)),
-    );
-    order.push(remaining.splice(index, 1)[0]!);
+    const index = remaining.findIndex((id) => incoming[positions.get(id)!] === 0);
+    const id = remaining.splice(index, 1)[0]!;
+    order.push(id);
+    for (const next of edges[positions.get(id)!]!) incoming[next]!--;
   }
   return order;
 }

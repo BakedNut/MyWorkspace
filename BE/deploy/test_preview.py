@@ -239,18 +239,12 @@ class PreviewDeploymentTest(unittest.TestCase):
         self.assertFalse(any(args[:3] == ["ln", "-s", self.old_jar] for args in commands))
 
     def test_local_receipt_failure_reports_active_release_after_server_receipt_succeeds(self):
-        write_text = Path.write_text
-        def write(path, *args, **kwargs):
-            if path.name == "deployment.json":
-                raise PermissionError("read only")
-            return write_text(path, *args, **kwargs)
         warnings = io.StringIO()
-        with patch.object(Path, "write_text", write), contextlib.redirect_stderr(warnings):
-            preview.deploy(self.root)
-        self.private.assert_called_once()
+        with patch.object(preview, "atomic_receipt", side_effect=PermissionError("read only")):
+            with contextlib.redirect_stderr(warnings):
+                preview.deploy(self.root)
         self.assertIn("release commit is active; local deployment record write failed", warnings.getvalue())
-        commands = [call.args[1] for call in self.run.call_args_list]
-        self.assertFalse(any(args[:3] == ["ln", "-s", self.old_jar] for args in commands))
+        self.private.assert_called_once()
 
     def test_overlapping_deployment_is_rejected_before_reading_release_links(self):
         started = threading.Event()

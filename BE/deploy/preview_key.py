@@ -1,4 +1,4 @@
-"""Run in LXC 200 to read a key with the preview service's applied configuration."""
+"""Run in LXC 200 to read a key with the selected service's applied configuration."""
 from pathlib import Path
 import json
 import os
@@ -88,9 +88,11 @@ def read_key(jar):
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) > 2:
+            SERVICE = sys.argv[2]
         if sys.argv[1] == "--service-arguments":
             print(json.dumps(configured_arguments()))
         else:
             print(read_key(sys.argv[1]))
     except Exception:
-        raise SystemExit("Cannot read the preview service encryption key") from None
+        raise SystemExit("Cannot read the service encryption key") from None

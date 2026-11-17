@@ -41,6 +41,24 @@ python3 BE/deploy/backup.py --verify
 python3 BE/deploy/deploy.py
 ```
 
+운영 백업은 myworkspace.service의 실행 중인 프로세스 환경·명령·계정으로 실제 암호화 키를 읽습니다. 중지 상태이면 systemd 환경 설정을 사용합니다. 일반 백업도 임시 DB에 복원하고 iCloud 자격 증명·현재/등록 중 OTP 암호문의 AES-GCM 인증을 확인한 뒤 게시합니다. 키 교체로 DB 암호문과 맞지 않거나 키를 확보하지 못하면 최종 백업을 게시하지 않습니다. --verify는 기존 테이블·마이그레이션 검증도 추가합니다. SQL은 --hex-blob으로 덤프하고, SQL·키를 비공개 임시 디렉터리에 준비한 뒤 키를 먼저 게시하고 최종 SQL을 완료 표시로 게시합니다. 실패한 새 쌍은 정리하며 최근 완료 백업 14개를 보존합니다. 동시에 실행된 백업은 잠금으로 거부합니다.
+
+백업 도구에는 호스트 Python cryptography와 PreviewKeyBackup을 포함한 빌드 JAR가 필요합니다. 저장소에서 실행하면 BE/target의 빌드를 사용합니다. BACKUP_HELPER_JAR로 별도 빌드를 지정할 수도 있습니다. 헬퍼는 LXC 200의 임시 경로에서 키만 읽고 종료하며 운영 앱의 초기화는 실행하지 않습니다. 기존 앱 JAR에 헬퍼 클래스가 없는 경우에도 별도 빌드를 사용하므로 먼저 백업할 수 있습니다.
+
+기존 일일 백업 서비스를 갱신할 때는 Proxmox 호스트에서 아래 묶음을 설치합니다. 운영 앱의 JAR·서비스를 변경하는 명령은 별도의 운영 배포 절차에 있습니다.
+
+```sh
+apt-get install --yes python3-cryptography
+python3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM'
+install -D -m 600 BE/target/myworkspace-0.0.1-SNAPSHOT.jar /usr/local/share/myworkspace-backup-helper.jar
+install -m 700 BE/deploy/preview_key.py /usr/local/sbin/preview_key.py
+install -m 700 BE/deploy/backup.py /usr/local/sbin/myworkspace-backup.py
+install -m 644 BE/deploy/myworkspace-backup.service /etc/systemd/system/myworkspace-backup.service
+install -m 644 BE/deploy/myworkspace-backup.timer /etc/systemd/system/myworkspace-backup.timer
+systemctl daemon-reload
+systemctl enable --now myworkspace-backup.timer
+```
+
 운영 배포 스크립트는 새 JAR·FE를 준비하고 Nginx 설정을 검사한 뒤 버전을 전환합니다. 백엔드의 정상 시작을 확인한 후 FE 링크와 Nginx를 갱신합니다. 기존 서비스 활성·자동 시작 상태, JAR·FE 링크와 설정을 기록해 실패 시 복구합니다. 복구 실패 시 예외에 표시된 임시 경로에 자료를 보존합니다. [운영 배포 코드](../BE/deploy/deploy.py)
 
 배포 후 서비스를 점검합니다.
@@ -61,7 +79,7 @@ curl --fail http://192.168.1.200/api/health
 python3 BE/deploy/preview.py
 ```
 
-배포 시 JAR·FE의 현재 커밋 일치와 FE 전체 파일 해시를 검사하고, 빌드 산출물을 스냅샷으로 보관해 업로드합니다. 검증된 새 JAR를 업로드한 뒤 테스트 DB·암호화 키를 백업하고 새 릴리스로 전환합니다. 실행 중이면 적용된 프로세스 환경·명령을, 중지 상태이면 systemd의 서비스 환경 설정을 사용해 실제 키 경로를 해석합니다. 독립 키 읽기 프로그램은 애플리케이션 초기화를 수행하지 않습니다. iCloud·OTP 암호화 데이터가 있는데 키를 확보하지 못하거나 키 길이가 잘못되면 백업을 실패 처리합니다. SQL·키 파일은 비공개 권한으로 준비하고 성공한 SQL 백업을 마지막에 게시합니다. 첫 서비스 시작·재시작 전에 단위 변경을 다시 읽고 실제 ExecStart의 JVM -D 옵션과 Spring -- 인자를 전달하는 독립 DB 검사를 systemd ExecStartPre에 등록합니다. 인자 경계를 유지하며 검사 설정 파일은 비공개 권한으로 저장합니다. JVM 옵션 구간의 미해석 변수 확장(`$JAVA_OPTS`, `${JAVA_OPTS}` 등)과 `@argfile`은 검사와 실제 실행의 인자 일치를 보장할 수 없어 서비스 시작 전에 거부합니다. JVM 옵션은 명시적으로 지정해야 합니다. 같은 서비스 환경의 Spring 설정을 읽고 런타임·Flyway 두 계정으로 실제 연결한 DB와 Flyway의 default-schema·schemas가 모두 myworkspace_preview를 대상으로 하는지 확인한 뒤 애플리케이션을 시작합니다. 검사 프로그램에는 Flyway·JPA 초기화를 등록하지 않습니다. DB 사전 검사 drop-in의 기존 존재 여부와 내용을 설정 교체 전에 백업합니다. 설정 기록·daemon-reload 또는 이후 전환이 실패하면 이전 database-check.conf와 릴리스 링크를 복원합니다. database-safety.conf는 별도로 최신 검사 JAR를 참조하고 롤백 재시작 전에도 다시 설치·재로드합니다. 이전 설정에 검사가 없거나 이전 검사 구현을 사용해도 최신 안전 검사를 거칩니다. 안전 검사 준비·재시작 검사가 실패하면 백엔드를 중지하고 롤백 실패를 보고합니다. 실제 실행 JAR와 검사 JAR의 패키징된 properties·YAML 설정을 매 시작 전에 비교하며 git.properties를 제외한 설정이 다르면 시작을 거부합니다. 각 drop-in이 참조하는 검사 JAR는 보존해야 합니다. DB 설정이 잘못되면 해당 검사를 사용하는 이전 버전도 시작을 거부하며 환경 설정을 수정한 후 재시작해야 합니다. 업로드한 파일 해시와 API 상태를 검사합니다. FE 전환 전후에 8081·8088의 배포 상태 API에서 같은 백엔드 인스턴스인지 확인하고, 해당 인스턴스의 실제 연결 DB가 myworkspace_preview인지 확인합니다. 결과가 다르면 이전 테스트 릴리스로 복구합니다. 실제 제공되는 HTML·JS·CSS와 build-info.json의 내용·미디어 타입·인코딩도 검사합니다. 백엔드만 바뀐 릴리스에서도 메타데이터의 HTTP 해시를 대조합니다. 실패 시 이전 테스트 릴리스와 기존 실행·중지 상태로 복구합니다. CLI가 릴리스 전환 중 SIGTERM을 받으면 롤백 후 종료하며, 롤백의 원인에 관계없이 복구 중 SIGTERM은 무시하고 기존 신호 처리기를 복원합니다. 배포 결과는 서버의 deployed-version.json과 로컬 .runtime/shortcuts-preview/deployment.json에 기록합니다. [테스트 배포 코드](../BE/deploy/preview.py)
+배포 시 JAR·FE의 현재 커밋 일치와 FE 전체 파일 해시를 검사하고, 빌드 산출물을 스냅샷으로 보관해 업로드합니다. 검증된 새 JAR를 업로드한 뒤 테스트 DB·암호화 키를 백업하고 새 릴리스로 전환합니다. 실행 중이면 적용된 프로세스 환경·명령을, 중지 상태이면 systemd의 서비스 환경 설정을 사용해 실제 키 경로를 해석합니다. 독립 키 읽기 프로그램은 애플리케이션 초기화를 수행하지 않습니다. iCloud·OTP 암호화 데이터가 있는데 키를 확보하지 못하거나 키 길이가 잘못되면 백업을 실패 처리합니다. SQL·키 파일은 비공개 권한으로 준비하고 성공한 SQL 백업을 마지막에 게시합니다. 첫 서비스 시작·재시작 전에 단위 변경을 다시 읽고 실제 ExecStart의 JVM -D 옵션과 Spring -- 인자를 전달하는 독립 DB 검사를 systemd ExecStartPre에 등록합니다. 인자 경계를 유지하며 검사 설정 파일은 비공개 권한으로 저장합니다. JVM 옵션 구간의 미해석 변수 확장(`$JAVA_OPTS`, `${JAVA_OPTS}` 등)과 `@argfile`은 검사와 실제 실행의 인자 일치를 보장할 수 없어 서비스 시작 전에 거부합니다. JVM 옵션은 명시적으로 지정해야 합니다. 같은 서비스 환경의 Spring 설정을 읽고 런타임·Flyway 두 계정으로 실제 연결한 DB와 Flyway의 default-schema·schemas가 모두 myworkspace_preview를 대상으로 하는지 확인한 뒤 애플리케이션을 시작합니다. 검사 프로그램에는 Flyway·JPA 초기화를 등록하지 않습니다. DB 사전 검사 drop-in의 기존 존재 여부와 내용을 설정 교체 전에 백업합니다. 설정 기록·daemon-reload 또는 이후 전환이 실패하면 이전 database-check.conf와 릴리스 링크를 복원합니다. database-safety.conf는 별도로 최신 검사 JAR를 참조하고 롤백 재시작 전에도 다시 설치·재로드합니다. 이전 설정에 검사가 없거나 이전 검사 구현을 사용해도 최신 안전 검사를 거칩니다. 안전 검사 준비·재시작 검사가 실패하면 백엔드를 중지하고 롤백 실패를 보고합니다. 실제 실행 JAR와 검사 JAR의 패키징된 properties·YAML 설정을 매 시작 전에 비교하며 git.properties를 제외한 설정이 다르면 시작을 거부합니다. 각 drop-in이 참조하는 검사 JAR는 보존해야 합니다. DB 설정이 잘못되면 해당 검사를 사용하는 이전 버전도 시작을 거부하며 환경 설정을 수정한 후 재시작해야 합니다. 업로드한 파일 해시와 API 상태를 검사합니다. FE 전환 전후에 8081·8088의 배포 상태 API에서 같은 백엔드 인스턴스인지 확인하고, 해당 인스턴스의 실제 연결 DB가 myworkspace_preview인지 확인합니다. 결과가 다르면 이전 테스트 릴리스로 복구합니다. 실제 제공되는 HTML·JS·CSS와 build-info.json의 내용·미디어 타입·인코딩도 검사합니다. 백엔드만 바뀐 릴리스에서도 메타데이터의 HTTP 해시를 대조합니다. 실패 시 이전 테스트 릴리스와 기존 실행·중지 상태로 복구합니다. CLI가 릴리스 전환 중 SIGTERM을 받으면 롤백 후 종료하며, 롤백의 원인에 관계없이 복구 중 SIGTERM은 무시하고 기존 신호 처리기를 복원합니다. 배포 결과는 서버의 deployed-version.json과 로컬 .runtime/shortcuts-preview/deployment.json에 기록합니다. 마지막 화면 검증까지 종료 신호는 롤백으로 처리합니다. 검증 성공 후에는 활성화 성공으로 확정하고 SIGTERM을 서버·로컬 기록 완료까지 지연합니다. 두 기록은 비공개 임시 파일에서 원자적으로 교체한 뒤 대기 중인 종료 신호를 전달합니다. 기록 쓰기 자체가 실패한 경우에는 활성 릴리스와 기록 위치를 경고로 알립니다. [테스트 배포 코드](../BE/deploy/preview.py)
 
 테스트 주소와 API 상태를 확인합니다.
 
