@@ -1,6 +1,6 @@
 # Backend
 
-Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
+Java 21 · Spring Boot · Spring Security · JPA · JdbcTemplate · MySQL을 사용합니다.
 
 ```sh
 ./mvnw verify
@@ -10,13 +10,17 @@ Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
 
 ## 구조
 
-인증(`auth`)·일정/시간표(`calendar`)·서버 상태(`server`)·WOL(`wol`)·사이트 설정(`settings`)을 기능별 패키지로 관리합니다. 각 기능 안에서 Controller·Service·Repository·데이터 클래스를 파일별로 구분하며 공통 저장·암호화·오류 처리는 `common`에 둡니다.
+인증(`auth`)·일정/시간표(`calendar`)·서버 상태(`server`)·바로가기(`shortcuts`)·WOL(`wol`)·사이트 설정(`settings`)을 기능별 패키지로 관리합니다. 각 기능 안에서 Controller·Service·Repository·데이터 클래스를 파일별로 구분하며 공통 저장·암호화·오류 처리는 `common`에 둡니다.
 
-구조 선택 이유와 호출 방향, 새 코드를 추가할 위치는 [백엔드 구조 안내](docs/architecture.md)를 참고하세요. 이전 패키지의 클래스가 남지 않도록 구조 변경 검증에는 `./mvnw clean verify`를 사용합니다.
+구조 선택 이유와 호출 방향, 새 코드를 추가할 위치는 구조 안내에 설명합니다. 구조 변경 후에는 BE 디렉터리에서 clean 빌드로 검증합니다. [백엔드 구조 안내](docs/architecture.md)
+
+```sh
+./mvnw clean verify
+```
 
 ## 기능
 
-- 로그인과 사용자 설정, 일정·공휴일·시간표, 서버 모니터링, WOL API를 제공합니다.
+- 로그인과 사용자 설정, 일정·공휴일·시간표, 바로가기, 서버 모니터링, WOL API를 제공합니다.
 - 한 과목에 여러 수업 시간을 저장하며 각 시간의 휴강일·강의실과 전체 시간 겹침을 검사합니다. 기존 시간표도 읽을 수 있습니다.
 - iCloud 연결은 웹 설정에서 진행합니다. 일반 일정은 편집하고 반복·여러 날·초대 일정은 조회합니다.
 - 비밀번호 변경은 기존 비밀번호 또는 등록한 Google OTP로 확인합니다. OTP 등록도 별도 확인 절차를 거칩니다.
@@ -31,6 +35,45 @@ Java 21 · Spring Boot · Spring Security · JPA · MySQL을 사용합니다.
 
 인증된 `GET /api/calendar/visibility`와 CSRF가 필요한 `PUT /api/calendar/visibility`로 `hiddenCalendarIds`를 조회·저장합니다. 학교 시간표는 `__school`, iCloud는 각 캘린더 ID를 사용하며 MySQL의 별도 문서에 저장합니다. 초기값은 전체 표시입니다. 일정·시간표 원본은 변경하지 않습니다.
 
+## 바로가기 API
+
+모든 바로가기 API는 인증이 필요하며 목록 저장에는 CSRF 토큰도 필요합니다.
+
+| 요청 | 동작 |
+|---|---|
+| GET /api/shortcuts | revision과 분류·링크 목록 조회 |
+| PUT /api/shortcuts | 전체 목록 저장. 이전 revision이면 409 CONFLICT |
+| GET 또는 HEAD /api/shortcuts/icons/{id} | 저장된 링크의 사이트 아이콘 조회. site 쿼리는 현재 URL의 출처와 비교 |
+
+최대 분류 50개·전체 링크 200개를 지원합니다. 분류 이름은 80자, 링크 이름은 120자, URL은 2,048자까지이며 HTTP·HTTPS URL을 검증합니다. 이름의 앞뒤 공백을 제거하고 공백만 있는 이름·제어 문자를 거부합니다. 문서 잠금 안에서 revision을 확인하고 정규화한 목록이 변경된 경우에 증가시킵니다. 변경 없는 저장은 현재 revision을 반환하며 이전 revision의 요청은 409로 거부합니다.
+
+V8은 app_document에 초기 바로가기 문서를 추가하고, V9는 shortcut_icon 캐시 테이블을 만듭니다. 캐시는 출처별로 공유하며 정상 아이콘은 7일, 아이콘 없음은 6시간 보관합니다. 외부 수집은 작업자 2개·대기열 32개로 제한합니다. 수집 대기·대기열 포화는 202와 Retry-After, 수집 완료 후 아이콘 없음은 204, 정상 이미지는 200을 반환합니다. 일시적인 HTTP·DNS·통신 장애는 기존 이미지와 확인 시각을 보존하며, 저장된 이미지가 없으면 202로 재시도를 안내합니다. 아이콘 부재가 확인된 경우에만 미발견 결과를 캐시합니다. 아직 수집 결과가 없으면 공유 작업을 유지하며 즉시 202를 반환합니다.
+
+기본 /favicon.ico를 먼저 조회하고 찾지 못하면 홈페이지와 명시된 아이콘 후보를 수집합니다. 느린 홈페이지가 기본 아이콘 조회 기회를 소진하는 것을 방지합니다.
+
+아이콘 다운로드에는 DNS 주소 고정, 대상 주소·포트·리디렉션 검사와 8초 수집 제한을 적용합니다. 이미지는 검증·정화 후 저장합니다. 사설망 아이콘 접근 범위는 SHORTCUT_ICON_NETWORKS로 지정하며 실제 환경에 맞게 설정합니다. 자세한 책임 분리는 구조 안내에 있습니다. [백엔드 구조](docs/architecture.md)
+
 ## MySQL 통합 테스트
 
-기본 테스트는 H2에서 실행합니다. CI의 별도 mysql 작업은 MySQL 8.4 서비스에서 V1~V7 마이그레이션과 로컬 일정 revision/동시 갱신·삭제, WOL 잠금/예약, iCloud 캐시 날짜/읽기전용 메타데이터, 메트릭 SQL 집계를 검증합니다. `MYSQL_TEST_URL`, `MYSQL_TEST_USERNAME`, `MYSQL_TEST_PASSWORD`로 비어 있는 테스트 전용 DB를 지정하고 `./mvnw -Dtest=MySqlIntegrationTest verify`로 같은 검증을 실행할 수 있습니다. 배포 스크립트 테스트는 CI에서 별도로 실행합니다.
+기본 테스트는 H2에서 실행합니다. CI의 별도 mysql 작업은 MySQL 8.4 서비스에서 V1~V9 마이그레이션과 로컬 일정 revision/동시 갱신·삭제, 바로가기 revision 충돌·아이콘 캐시, WOL 잠금/예약, iCloud 캐시 날짜/읽기전용 메타데이터, 메트릭 SQL 집계를 검증합니다. MYSQL_TEST_URL, MYSQL_TEST_USERNAME, MYSQL_TEST_PASSWORD로 비어 있는 테스트 전용 DB를 지정한 뒤 BE 디렉터리에서 실행합니다.
+
+```sh
+./mvnw -Dtest=MySqlIntegrationTest verify
+```
+
+배포 스크립트 테스트는 CI에서 별도로 실행합니다. [개발 검증](../docs/development.md#로컬-실행과-검증)
+
+## 배포 상태 확인
+
+기본 상태 API는 기존 상태 응답을 제공합니다. 배포 점검 API는 프로세스별 임의 인스턴스 ID와 실제 연결 DB가 테스트 DB인지 나타내는 불리언 값만 반환합니다. 두 경로는 비로그인 상태에서도 조회할 수 있습니다.
+
+```text
+GET /api/health
+GET /api/health/deployment
+```
+
+테스트 배포 도구는 8081과 8088의 인스턴스 일치와 테스트 DB 판정을 확인한 후 배포 결과를 기록합니다.
+
+## 테스트 배포 시작 전 DB 검사
+
+PreviewDatabaseCheck는 일반 애플리케이션과 별도로 실행하는 시작 전 검사 프로그램입니다. Spring 환경 설정을 읽어 런타임과 Flyway 연결의 실제 선택 DB를 각각 확인하고, 바인딩된 Flyway default-schema·schemas도 myworkspace_preview만 대상으로 하는지 검사합니다. 테스트 배포 도구는 이를 systemd ExecStartPre로 등록해 Flyway 실행 전에 두 연결 모두 myworkspace_preview인지 검사합니다. 검사 컨텍스트는 데이터베이스 초기화를 실행하지 않습니다. 배포 실패 시 기존 database-check.conf의 존재 여부와 내용을 복원합니다. 별도의 database-safety.conf는 최신 검사 JAR를 계속 참조하며 롤백 재시작에도 적용합니다. 검사 설치·단위 재로드·DB 검사가 실패하면 백엔드를 중지하고 복구 실패를 보고합니다. 안전 검사에서 참조하는 JAR는 보존해야 합니다. 매 시작 전에 실제 실행 JAR와 검사 JAR의 패키징된 properties·YAML 설정을 비교합니다. git.properties를 제외한 설정이 다르면 자동 재시작을 차단하므로 해당 릴리스의 설정을 확인해야 합니다. 사전 검사는 기본 JDBC 데이터소스와 연결에 영향을 주지 않는 Hikari 풀 조정만 지원합니다. Hikari 연결 URL·자격 증명·데이터소스 속성, 별도 데이터소스 구현·JNDI, Flyway JDBC 속성·초기화 SQL 재정의는 연결 전에 거부합니다.

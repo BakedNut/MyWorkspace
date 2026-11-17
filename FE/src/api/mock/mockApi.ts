@@ -2,6 +2,7 @@ import type { ApiClient } from "../client";
 import { ApiError } from "../client";
 import { DEFAULT_SITE_NAME } from "@/types/domain";
 import type {
+  ShortcutBoard,
   CalendarEvent,
   CalendarInfo,
   EventInput,
@@ -81,6 +82,56 @@ let siteName = DEFAULT_SITE_NAME;
 let hiddenCalendarIds: string[] = [];
 
 export const mockApi: ApiClient = {
+  shortcuts: {
+    iconUrl: () => null,
+    async get() {
+      return structuredClone(
+        load<ShortcutBoard>("shortcuts", () => ({
+          revision: 0,
+          groups: [
+            {
+              id: "dev",
+              name: "개발",
+              collapsed: false,
+              links: [
+                { id: "github", name: "GitHub", url: "https://github.com/" },
+                { id: "spring", name: "Spring", url: "https://spring.io/" },
+                { id: "react", name: "React", url: "https://react.dev/" },
+              ],
+            },
+            {
+              id: "daily",
+              name: "자주 찾는 곳",
+              collapsed: false,
+              links: [
+                { id: "youtube", name: "YouTube", url: "https://www.youtube.com/" },
+                { id: "icloud", name: "iCloud", url: "https://www.icloud.com/" },
+              ],
+            },
+            {
+              id: "server",
+              name: "서버",
+              collapsed: true,
+              links: [{ id: "proxmox", name: "Proxmox", url: "https://www.proxmox.com/" }],
+            },
+          ],
+        })),
+      );
+    },
+    async save(input) {
+      await delay(100);
+      if (controls().simulateSaveFailure) throw new ApiError("저장하지 못했습니다.", "NETWORK");
+      const current = await mockApi.shortcuts.get();
+      if (input.revision !== current.revision)
+        throw new ApiError(
+          "다른 화면에서 바로가기가 변경됐습니다. 최신 목록을 불러온 뒤 다시 시도하세요.",
+          "CONFLICT",
+        );
+      const next = structuredClone({ ...input, revision: current.revision + 1 });
+      save("shortcuts", next);
+      return next;
+    },
+  },
   site: {
     async get() {
       return { siteName };

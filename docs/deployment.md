@@ -1,80 +1,125 @@
-# LXC 디자인 시안 배포
+# LXC 배포와 테스트 환경
 
-이 문서는 프론트엔드 시안 배포 당시의 기록이다. 현재는 실제 백엔드·MySQL·Proxmox·WOL을 연결했으며 최신 상태와 실행·복구 방법은 [백엔드 운영](backend-operations.md)을 따른다. 아래 `demo` 비밀번호와 `/api` 미구현 설명은 과거 시안에만 해당한다.
+현재 배포 도구는 Proxmox 호스트의 root 환경에서 pct로 기존 LXC에 접근합니다. 웹 LXC 200과 MySQL LXC 202, 기존 DB·계정·환경 파일·systemd 서비스를 준비한 상태에서 사용합니다. 초기 구성은 설치 스크립트에서 확인할 수 있습니다. [초기 설치](../BE/deploy/initialize.py)
 
-## 배포 상태
+## 실행 구성
 
-- 대상: 웹앱 LXC 200, `192.168.1.200:80`.
-- 내부망 주소: [MyWorkspace](http://192.168.1.200/).
-- 기존 NPM 주소: [MyWorkspace HTTPS](https://wol.joonkee1219.duckdns.org/).
-- NPM 201의 기존 프록시 대상과 접근 허용 목록은 변경하지 않았다.
-- 시안 비밀번호: `demo`. 실제 인증이 아니며 데이터는 접속한 브라우저의 localStorage에 저장된다.
-- 배포한 FE 소스: `c68932007edf7c491a2f986de515ce0da38f2b5d`.
-- 배포 디렉터리: `/var/www/myworkspace/releases/c689320-20261106055022Z`.
-- 이전 release `858dc72-20261106052232Z` 등은 복구를 위해 보존했다.
-- 현재 경로: `/var/www/myworkspace/current` 심볼릭 링크.
-- Nginx는 실행 중이며 LXC 부팅 시 자동으로 시작한다.
+| 구분 | 웹·API | 서비스 | 데이터베이스 |
+|---|---|---|---|
+| 운영 | LXC 200의 Nginx 80 → Spring Boot 8080 | nginx, myworkspace | myworkspace |
+| 테스트 | LXC 200의 테스트 웹 8088 → Spring Boot 8081 | myworkspace-preview-web, myworkspace-preview | myworkspace_preview |
+| HTTPS 입구 | LXC 201 NPM → LXC 200 Nginx | 기존 NPM 설정 | 해당 환경의 DB |
 
-## 설정
+Spring Boot는 loopback에서 수신합니다. 운영 Nginx는 React 정적 파일을 제공하고 API를 백엔드로 전달합니다. React 경로 직접 접속은 index.html로 연결합니다. API의 Cache-Control은 백엔드 응답 값을 전달합니다. 정상 아이콘은 private·1일 캐시를 사용하고 수집 대기·아이콘 없음은 no-store를 사용합니다. 화면 정적 파일은 no-store를 유지합니다. HTTPS와 외부 접근 허용 목록은 NPM에서 관리합니다. 신뢰 프록시와 자동 입장 조건은 운영 안내에서 설명합니다. [접속 경로](backend-operations.md#접속-경로와-자동-입장)
 
-저장소의 `FE/deploy/nginx.conf`를 LXC의 `/etc/nginx/nginx.conf`에 적용했다.
+실제 환경 파일·비밀번호·연동 토큰과 DB·암호화 키 백업은 비공개로 관리합니다.
 
-- Nginx와 firewalld는 내부망 `192.168.1.0/24`의 HTTP 접속을 허용한다. Nginx는 로컬 점검을 위해 loopback도 허용한다.
-- NPM으로 들어오는 접속은 기존 NPM 접근 허용 목록을 추가로 적용받는다.
-- React 페이지 직접 접속은 `index.html`로 연결한다.
-- 없는 정적 파일은 404를 반환한다.
-- 미구현 백엔드 경로 `/api/`는 503을 반환한다.
-- 시안 수정 확인을 위해 브라우저 캐시는 `no-store`로 설정했다.
+## 배포할 커밋 빌드
 
-원래 Nginx 설정 백업: `/etc/nginx/nginx.conf.before-myworkspace-5ad5305-20261106022016Z`.
+아래 명령어는 저장소 루트에서 실행합니다. Java 21과 Node.js 22.12 이상인 22.x가 필요합니다. 원격 develop을 가져오고 작업 상태를 확인한 뒤 빌드합니다.
 
-## 다음 화면 수정 배포
+```sh
+git fetch origin
+git switch develop
+git merge --ff-only origin/develop
+git status --short --branch
+npm --prefix FE ci
+npm --prefix FE run build
+./BE/mvnw -f BE/pom.xml -DskipTests package
+```
 
-1. `FE/`에서 `npm ci`, 필요한 검사와 `npm run build`를 실행한다.
-2. 빌드한 `dist/`를 새 release 디렉터리로 전송한다. 서버에는 소스나 `node_modules/`를 올리지 않는다.
-3. `current` 심볼릭 링크를 새 release로 교체한다. 이전 release는 복구를 위해 보존한다.
-4. Nginx 설정도 변경했다면 먼저 백업하고 `nginx -t` 성공 후 `systemctl reload nginx`를 실행한다.
-5. 내부망과 HTTPS 주소에서 로그인, 페이지 직접 접속과 새로고침을 확인한다.
+위 빌드 명령은 테스트를 생략하므로 배포할 커밋의 CI와 필요한 로컬 검증을 먼저 확인합니다. FE는 기본 실제 API 모드로 빌드합니다. 화면 시안용 목업 설정이 필요한 경우에는 별도 목업 실행 절차를 사용합니다. [개발 검증](development.md)
 
-Nginx가 읽을 수 있도록 상위 디렉터리는 755, 빌드 파일은 644 권한을 유지한다. SSH 키와 실제 비밀정보는 저장소에 넣지 않는다.
+BE JAR에는 git.properties, FE에는 build-info.json이 생성됩니다. FE 메타데이터에는 커밋·작업 트리 변경 여부·빌드 파일 해시와 유효 API 모드(apiMode)가 포함됩니다. 테스트 배포는 rest 모드만 허용하며 목업·알 수 없는 모드·모드 기록이 없는 이전 빌드는 거부합니다. 모드는 Vite가 해석한 환경 파일·프로세스 환경과 test 모드를 반영합니다. 브랜치 이동이나 코드 수정 후에는 두 산출물을 다시 빌드합니다.
 
-## 검증
+## 운영 배포
 
-- LXC에서 Nginx 설정 검사와 서비스 자동 시작 확인.
-- 모든 페이지의 HTTP 200 및 빌드한 index.html과 응답 파일 일치 확인.
-- 잘못된 정적 파일의 404, 미구현 API의 503 확인.
-- 일반 DNS 경로와 정상 인증서 검증을 통한 기존 NPM HTTPS 200 확인.
-- 내부망·HTTPS 두 주소에서 PC(1440×1024)와 모바일(390×844)의 로그인, 네 페이지 이동, 직접 접속·새로고침, 모바일 메뉴를 검증했다. 페이지 실행 오류와 실패한 리소스 요청은 없었다.
-- 시간표 표 편집 배포에서는 내부망·HTTPS 양쪽의 실제 Chromium에서 빈 칸 추가, 블록 선택, `18:25–19:15` 분 단위 위치, 교수명·강의실 저장과 새로고침 유지, 중복 시간 차단, 취소·삭제, 모의 API 저장 실패 시 입력 보존, 모바일 편집·내부 스크롤을 확인했다. 페이지 실행 오류는 없었다.
-- 새 release의 빌드 파일 3개는 전송 전후 SHA-256이 일치했고 Nginx 설정 검사·서비스 상태도 통과했다. 이번 변경에서 NPM·방화벽 설정은 바꾸지 않았다.
-- 시간표 분 선택을 `00, 05, …, 55`로 변경했다. PC·모바일에서 시와 분을 따로 선택해 저장·새로고침을 검증했고, 기존 5분 간격 밖 시각은 반올림하지 않고 보존한다.
-- 날짜 칸과 안의 일정은 날짜 선택만 하며 수정 모달을 열지 않는다. 수정은 선택 날짜의 일정 목록에서 한다. 선택 날짜 제목 아래에 추가 버튼 하나를 두며, 더블클릭과 버튼이 같은 일반 일정 모달을 연다. ‘종일’ 토글로 종일 일정을 저장한다.
-- 별도 종일 빠른 추가 모달·안내 문구와 ‘내 일정(로컬)’ 분류를 없앴다. 기존 로컬 분류 일정은 내용·ID를 유지해 iCloud 시안 분류에서 계속 표시·수정하며 실제 계정에 전송하지 않는다.
-- 공휴일은 체크박스 없이 항상 표시하며 오늘·토요일·옆 달의 날짜도 빨간색이다. 다른 캘린더를 숨기거나 일정이 많은 경우에도 공휴일 이름을 표시한다. 실제 공휴일 피드는 연결하지 않았으며 시안 데이터를 기준으로 표시한다.
-- 통합 캘린더 변경을 내부망·HTTPS의 PC(1440×1024)·모바일(390×844) Chromium에서 확인했다. 일반·종일 저장과 새로고침, 더블클릭 시 일반 일정 기본값, 기존 로컬 분류 일정의 표시·편집, 공휴일 필터·색상을 검증했다. HTTPS 첫 검사에서 로그인 화면 대기가 한 번 시간 초과되었으나 HTTP 200과 재실행 통과를 확인했다. 성공한 검증의 페이지 실행 오류·가로 넘침은 없었다.
-- 표시 체크박스는 이름과 색상만 표시하며 회색 출처·읽기 전용 문구와 자물쇠를 제거했다. 내부망·HTTPS의 PC·모바일 Chromium에서 표시와 체크박스 전환을 확인했고 페이지 실행 오류·가로 넘침은 없었다.
-- 호스트 CPU·RAM·네트워크는 3열 그래프이며 CPU 온도는 코어 수 옆에 표시한다. VM·LXC 카드는 최대 2열, 모바일 1열이고 카드 안에는 CPU·RAM·네트워크·디스크가 2×2로 배치된다. 호스트와 게스트의 기간 선택은 독립적이다. 스토리지 바와 활성 페이지의 60초 갱신을 유지한다. 기록은 시안 데이터다.
-- 네트워크의 Input·Output 두 선은 같은 전송량 축을 사용하고 디스크는 사용률 축을 쓴다. 한 방향 기록만 있어도 표시하며 누락·사용량 미지원 기록은 0으로 채우지 않는다. 게스트 RAM은 사용률과 GB 사용량/전체 용량을 한 번만 표시한다.
-- 메인은 날짜 아래 오전·오후 12시간 시계에 초까지 표시하며 오전·오후 글자는 숫자 크기의 50%다. 선택 날짜 제목을 `2026년 11월 6일 금요일의 일정`처럼 합쳤다. 달력의 제자리 선택·다른 달 조회를 유지한다.
-- WOL은 최대 2열, 모바일 1열의 큰 버튼과 목록 수정 모달을 제공한다. PC 추가·삭제·이름·MAC 수정, 중복 MAC 거부, 저장 실패 입력 보존, 정규화·재조회·새로고침, 요청 제한과 모의 부팅 확인을 검증했다. 기본 두 PC의 기존 ID·MAC은 유지한다.
-- 모바일 320·390·430px에서 스크롤된 위치의 왼쪽 버튼·고정 메뉴 패널, 메뉴 이동·Escape 닫기, 일정 모달 날짜·시간 입력의 너비와 겹침을 확인했다. 입력칸은 작은 화면에서 한 열로 배치한다. 실제 Safari 기기는 검증하지 않았다.
-- 내부망·HTTPS에서 PC 1440×1024·모바일 390×844로 전체 변경을 재검증했다. 성공한 실행의 페이지 오류·실패한 리소스·가로 넘침은 없었다. HTTPS 첫 로그인 화면 대기가 한 번 시간 초과되었으나 HTTP 200과 전체 재실행 통과를 확인했다. 증거는 로컬 `.runtime/layout-revision/`에 보관하며 Git에는 포함하지 않는다.
-- 화면별·기능별 커밋으로 분리했다. 대시보드 `bc929a6`, 메인 `9939020`, 캘린더 명칭 `e1d896e`, WOL `968b800`, 모바일 `829ce05`, 그래프 크기·날짜 `e9b091e`, 라우터 임시 파일 제외 `858dc72`다.
-- 이번 수정은 메인 `06cba95`, 대시보드 `c689320`으로 나눴다. 320·390·1024·1440px에서 초 갱신·글자 비율·제목, 호스트/게스트 기간 독립성, 그래프 단위·개수·열 수와 가로 넘침을 검증했다. 실제 내부망·HTTPS에서도 390·1440px Chromium으로 재검증했다. 캡처는 로컬 `.runtime/metrics-revision/`에 보관한다.
-- 보조 HTTPS 요청에서 502가 한 번 관찰되었다. NPM의 해당 오류 로그는 웹 LXC 연결 중 `No route to host`였다. 이후 HTTPS 브라우저 재검증은 페이지 실행 오류 없이 통과했으며, 경로 오류의 지속 여부·근본 원인은 별도 확인이 필요하다. 평평한 SVG 선의 경계 높이를 가시성으로 판단하던 검사도 그래프 SVG 요소 기준으로 수정했다.
-- 최신 배포 소스의 [GitHub Actions 검사](https://github.com/BakedNut/MyWorkspace/actions/runs/42170718000)가 성공했다. 자동 테스트 42개, 타입 검사·빌드·린트 오류 0건이며 기존 Fast Refresh 경고 2개는 남아 있다.
+Proxmox 호스트의 저장소 루트에서 DB 백업과 격리 복원 검증을 수행합니다. 복원 검증은 별도 임시 DB를 만들고 검증 후 삭제합니다.
 
-백엔드, 실제 iCloud·Proxmox·WOL 하드웨어 연동은 이 배포에 포함하지 않는다.
+```sh
+python3 BE/deploy/backup.py --verify
+python3 BE/deploy/deploy.py
+```
 
-## Tailscale 내부망 접속
+운영 백업은 myworkspace.service의 실행 중인 프로세스 환경·명령·계정으로 실제 암호화 키를 읽습니다. 중지 상태이면 systemd 환경 설정을 사용합니다. 일반 백업도 임시 DB에 복원하고 iCloud 자격 증명·현재/등록 중 OTP 암호문의 AES-GCM 인증을 확인한 뒤 게시합니다. 키 교체로 DB 암호문과 맞지 않거나 키를 확보하지 못하면 최종 백업을 게시하지 않습니다. --verify는 기존 테이블·마이그레이션 검증도 추가합니다. SQL은 --hex-blob으로 덤프하고, SQL·키를 비공개 임시 디렉터리에 준비한 뒤 키를 먼저 게시하고 최종 SQL을 완료 표시로 게시합니다. 실패한 새 쌍은 정리하며 최근 완료 백업 14개를 보존합니다. 동시에 실행된 백업은 잠금으로 거부합니다.
 
-웹 LXC의 `/32` 경로가 광고·승인되어 있어도 Proxmox의 전달 방화벽에서 허용해야 한다.
+백업 도구에는 호스트 Python cryptography와 PreviewKeyBackup을 포함한 빌드 JAR가 필요합니다. 저장소에서 실행하면 BE/target의 빌드를 사용합니다. BACKUP_HELPER_JAR로 별도 빌드를 지정할 수도 있습니다. 헬퍼는 LXC 200의 임시 경로에서 키만 읽고 종료하며 운영 앱의 초기화는 실행하지 않습니다. 기존 앱 JAR에 헬퍼 클래스가 없는 경우에도 별도 빌드를 사용하므로 먼저 백업할 수 있습니다.
 
-이번 접속 장애에서는 `mywksp-forward` 그룹이 정의되어 있었지만 `/etc/pve/firewall/cluster.fw`의 `[RULES]`에 연결되어 있지 않았다. 그룹 정의는 유지하고 아래 참조 한 줄을 추가해 적용했다.
+기존 일일 백업 서비스를 갱신할 때는 Proxmox 호스트에서 아래 묶음을 설치합니다. 운영 앱의 JAR·서비스를 변경하는 명령은 별도의 운영 배포 절차에 있습니다.
+
+```sh
+apt-get install --yes python3-cryptography
+python3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM'
+install -D -m 600 BE/target/myworkspace-0.0.1-SNAPSHOT.jar /usr/local/share/myworkspace-backup-helper.jar
+install -m 700 BE/deploy/preview_key.py /usr/local/sbin/preview_key.py
+install -m 700 BE/deploy/backup.py /usr/local/sbin/myworkspace-backup.py
+install -m 644 BE/deploy/myworkspace-backup.service /etc/systemd/system/myworkspace-backup.service
+install -m 644 BE/deploy/myworkspace-backup.timer /etc/systemd/system/myworkspace-backup.timer
+systemctl daemon-reload
+systemctl enable --now myworkspace-backup.timer
+```
+
+설치된 백업 도구의 수용 검증은 아래 명령으로 수행합니다. 복원 대상은 스크립트가 생성·삭제하는 myworkspace_restore_* 임시 DB입니다. 서비스는 oneshot이므로 정상 완료 후에도 inactive일 수 있으며 Result=success와 ExecMainStatus=0, 성공 로그 및 생성된 SQL·키 쌍을 함께 확인합니다. 암호화 설정이 없는 DB는 키 파일 없이 복원 검증할 수 있습니다.
+
+```sh
+systemctl start myworkspace-backup.service
+systemctl show myworkspace-backup.service -p ActiveState -p Result -p ExecMainStatus
+journalctl -u myworkspace-backup.service -n 30 --no-pager
+python3 /usr/local/sbin/myworkspace-backup.py --verify
+```
+
+패키징 회귀 테스트는 문서와 같은 임시 usr/local/sbin·usr/local/share·etc/systemd/system 배치에서 인접 헬퍼와 JAR 조회, 복원 암호 인증, 파일 누락 시 기존 백업 보존을 확인합니다. 실제 서비스 실행 결과는 검증한 배포 리비전별 PR에 기록합니다.
+
+운영 배포 스크립트는 새 JAR·FE를 준비하고 Nginx 설정을 검사한 뒤 버전을 전환합니다. 백엔드의 정상 시작을 확인한 후 FE 링크와 Nginx를 갱신합니다. 기존 서비스 활성·자동 시작 상태, JAR·FE 링크와 설정을 기록해 실패 시 복구합니다. 복구 실패 시 예외에 표시된 임시 경로에 자료를 보존합니다. [운영 배포 코드](../BE/deploy/deploy.py)
+
+배포 후 서비스를 점검합니다.
+
+```sh
+pct exec 200 -- systemctl is-active myworkspace nginx
+pct exec 200 -- curl --fail http://127.0.0.1:8080/api/health
+curl --fail http://192.168.1.200/api/health
+```
+
+브라우저에서 메뉴 이동·직접 접속·새로고침을 확인합니다. 같은 출처의 build-info.json과 배포한 JAR의 메타데이터·해시를 확인하고, 새 마이그레이션의 적용 결과도 확인합니다. NPM 경로는 해당 환경의 HTTPS 주소에서 별도로 점검합니다.
+
+## 테스트 배포
+
+테스트 배포 도구는 이미 구성된 테스트 서비스·DB·릴리스 링크를 사용하며 서비스가 중지된 상태도 처리합니다. DB 검사를 설치한 후 첫 시작을 수행하도록 배포 명령을 직접 실행합니다.
+
+```sh
+python3 BE/deploy/preview.py
+```
+
+배포 시 JAR·FE의 현재 커밋 일치와 FE 전체 파일 해시를 검사하고, 빌드 산출물을 스냅샷으로 보관해 업로드합니다. 검증된 새 JAR를 업로드한 뒤 테스트 DB·암호화 키를 백업하고 새 릴리스로 전환합니다. 실행 중이면 적용된 프로세스 환경·명령을, 중지 상태이면 systemd의 서비스 환경 설정을 사용해 실제 키 경로를 해석합니다. 독립 키 읽기 프로그램은 애플리케이션 초기화를 수행하지 않습니다. iCloud·OTP 암호화 데이터가 있는데 키를 확보하지 못하거나 키 길이가 잘못되면 백업을 실패 처리합니다. SQL·키 파일은 비공개 권한으로 준비하고 성공한 SQL 백업을 마지막에 게시합니다. 첫 서비스 시작·재시작 전에 단위 변경을 다시 읽고 실제 ExecStart의 JVM -D 옵션과 Spring -- 인자를 전달하는 독립 DB 검사를 systemd ExecStartPre에 등록합니다. 인자 경계를 유지하며 검사 설정 파일은 비공개 권한으로 저장합니다. JVM 옵션 구간의 미해석 변수 확장(`$JAVA_OPTS`, `${JAVA_OPTS}` 등)과 `@argfile`은 검사와 실제 실행의 인자 일치를 보장할 수 없어 서비스 시작 전에 거부합니다. JVM 옵션은 명시적으로 지정해야 합니다. 같은 서비스 환경의 Spring 설정을 읽고 런타임·Flyway 두 계정으로 실제 연결한 DB와 Flyway의 default-schema·schemas가 모두 myworkspace_preview를 대상으로 하는지 확인한 뒤 애플리케이션을 시작합니다. 검사 프로그램에는 Flyway·JPA 초기화를 등록하지 않습니다. DB 사전 검사 drop-in의 기존 존재 여부와 내용을 설정 교체 전에 백업합니다. 설정 기록·daemon-reload 또는 이후 전환이 실패하면 이전 database-check.conf와 릴리스 링크를 복원합니다. database-safety.conf는 별도로 최신 검사 JAR를 참조하고 롤백 재시작 전에도 다시 설치·재로드합니다. 이전 설정에 검사가 없거나 이전 검사 구현을 사용해도 최신 안전 검사를 거칩니다. 안전 검사 준비·재시작 검사가 실패하면 백엔드를 중지하고 롤백 실패를 보고합니다. 실제 실행 JAR와 검사 JAR의 패키징된 properties·YAML 설정을 매 시작 전에 비교하며 git.properties를 제외한 설정이 다르면 시작을 거부합니다. 각 drop-in이 참조하는 검사 JAR는 보존해야 합니다. DB 설정이 잘못되면 해당 검사를 사용하는 이전 버전도 시작을 거부하며 환경 설정을 수정한 후 재시작해야 합니다. 업로드한 파일 해시와 API 상태를 검사합니다. FE 전환 전후에 8081·8088의 배포 상태 API에서 같은 백엔드 인스턴스인지 확인하고, 해당 인스턴스의 실제 연결 DB가 myworkspace_preview인지 확인합니다. 결과가 다르면 이전 테스트 릴리스로 복구합니다. 실제 제공되는 HTML·JS·CSS와 build-info.json의 내용·미디어 타입·인코딩도 검사합니다. 백엔드만 바뀐 릴리스에서도 메타데이터의 HTTP 해시를 대조합니다. 실패 시 이전 테스트 릴리스와 기존 실행·중지 상태로 복구합니다. CLI가 릴리스 전환 중 SIGTERM을 받으면 롤백 후 종료하며, 롤백의 원인에 관계없이 복구 중 SIGTERM은 무시하고 기존 신호 처리기를 복원합니다. 배포 결과는 서버의 deployed-version.json과 로컬 .runtime/shortcuts-preview/deployment.json에 기록합니다. 마지막 화면 검증까지 종료 신호는 롤백으로 처리합니다. 검증 성공 후에는 활성화 성공으로 확정하고 SIGTERM을 서버·로컬 기록 완료까지 지연합니다. 두 기록은 비공개 임시 파일에서 원자적으로 교체한 뒤 대기 중인 종료 신호를 전달합니다. 기록 쓰기 자체가 실패한 경우에는 활성 릴리스와 기록 위치를 경고로 알립니다. [테스트 배포 코드](../BE/deploy/preview.py)
+
+테스트 주소와 API 상태를 확인합니다.
+
+```sh
+curl --fail http://192.168.1.200:8088/api/health
+```
+
+```text
+http://192.168.1.200:8088/
+```
+
+테스트가 끝나면 서비스를 중지합니다.
+
+```sh
+pct exec 200 -- systemctl stop myworkspace-preview-web myworkspace-preview
+pct exec 200 -- systemctl show myworkspace-preview-web myworkspace-preview -p Id -p ActiveState
+```
+
+## 최근 운영 확인
+
+2026년 11월 16일 PR #7을 develop으로 병합한 e077184를 운영 LXC에 배포했습니다. 배포 전 DB 백업·격리 복원, V8·V9 마이그레이션, 제공되는 JAR·FE 해시와 PC·모바일 화면 진입·바로가기 API를 확인했습니다. 테스트 서비스는 중지 상태로 확인했습니다. 이 기록은 해당 배포 시점 기준입니다. [PR #7](https://github.com/BakedNut/MyWorkspace/pull/7)
+
+## Tailscale 내부망 경로 점검
+
+서브넷 경로의 광고·승인과 Proxmox 전달 방화벽을 함께 확인합니다. 기존 장애에서는 mywksp-forward 그룹 정의를 클러스터 규칙에 연결한 뒤 macOS의 내부망 접속이 복구됐습니다.
 
 ```text
 [RULES]
 GROUP mywksp-forward
 ```
 
-기존 규칙과 서브넷 광고 목록, IP 포워딩·SNAT 설정은 유지했다. 실제 nftables의 `cluster-forward`에서 그룹 호출이 생성된 것을 확인했고, 맥북에서 Tailscale을 통한 내부망 주소 접속이 복구되었다. 전체 방화벽 설정은 Git에 올리지 않고 Proxmox의 비공개 경로에 백업했다.
+실제 환경에서는 기존 그룹 정의·적용 규칙·IP 포워딩·SNAT·클라이언트 경로를 확인합니다. 도메인의 VPN 내부 DNS와 앱의 자동 입장 IP 판정도 함께 점검합니다. 상세 방화벽·허용 목록·백업은 비공개 운영 기록에서 관리합니다.

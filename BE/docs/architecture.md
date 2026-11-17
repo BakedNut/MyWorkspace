@@ -27,6 +27,11 @@ kr.myworkspace
 │   │   ├── ICloudEventService.java
 │   │   └── ICloudCacheRepository.java
 │   └── CalendarPreferencesController.java / CalendarVisibility.java
+├── shortcuts/                        # 바로가기·분류와 아이콘 수집·캐시
+│   ├── ShortcutController.java
+│   ├── ShortcutService.java / ShortcutBoard.java
+│   ├── ShortcutUrl.java
+│   └── ShortcutIconService.java / ShortcutIconFetcher.java / ShortcutIconImage.java / ShortcutIcon.java
 ├── server/                           # Proxmox 상태 수집과 그래프 기록
 │   ├── MonitoringController.java
 │   ├── MonitoringService.java          # 실시간 스냅샷 조합과 수집 흐름
@@ -100,3 +105,11 @@ kr.myworkspace
 수동 동기화의 성공 응답은 현재 연결의 갱신 작업이 완료됐음을 뜻합니다. 전체 또는 같은 범위의 작업이 진행 중이면 그 결과를 기다립니다. 요청은 최대 25초 대기하며 완료 전에는 409 SYNC_IN_PROGRESS로 진행 중임을 알립니다. 대기 중 연결/일정 세대가 바뀌면 재검증하고, 유효한 완료 결과를 보장할 수 없을 때 충돌 응답을 반환합니다. 실행 Future는 SyncService가 관리하며 모든 상태/세대 변경은 Coordinator의 공통 잠금에서 처리합니다.
 
 복수 범위 동기화의 작업 결과는 각 범위의 최종 갱신 성공 여부를 누적합니다. 안정된 연결·캐시 세대에서 일부 범위가 실패하면 이후 범위가 성공해도 작업 Future를 실패로 완료하고 수동 API는 503 NETWORK와 재시도 안내를 반환합니다. 성공한 범위와 실패한 범위의 기존 캐시는 유지합니다. 세대가 바뀐 작업은 기존 세대 재검증 경로로 처리합니다.
+
+## 바로가기 저장과 아이콘 수집
+
+ShortcutController는 목록 조회·저장과 아이콘 응답을 제공합니다. ShortcutService는 DocumentStore의 문서 잠금 안에서 revision·중복 ID·이름·URL·저장 한도를 검증합니다. 전체 보드와 접힘 상태는 app_document에 저장합니다.
+
+ShortcutIconService는 저장된 링크를 확인하고 출처별 캐시·공유 수집 작업·대기열을 관리합니다. ShortcutIconFetcher는 DNS·주소·포트·리디렉션·다운로드 제한을 검사하고 ShortcutIconImage로 이미지 검증·정화를 요청합니다. 캐시 SQL은 IconService의 JdbcTemplate과 TransactionTemplate에서 처리하며 외부 다운로드는 해당 DB 트랜잭션 밖에서 수행합니다.
+
+V8은 초기 보드 문서, V9는 아이콘 캐시 테이블을 추가합니다. 캐시가 없으면 수집을 예약하고 즉시 대기 상태를 반환해 브라우저 연결을 확보합니다. Controller는 정상 이미지 200·임시 대기 202·완료된 아이콘 없음 204로 상태를 전달합니다. 프론트엔드의 충돌 병합과 드래그 상태는 FE의 shortcuts 화면·컴포넌트·라이브러리에서 관리합니다.

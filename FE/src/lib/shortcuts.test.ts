@@ -1,0 +1,1297 @@
+import { describe, expect, it } from "vitest";
+import {
+  moveShortcut,
+  normalizeShortcutUrl,
+  reconcileShortcutBoard,
+  recordShortcutMoves,
+  type AutomaticShortcutPlacement,
+} from "./shortcuts";
+import type { ShortcutBoard } from "@/types/domain";
+
+const board: ShortcutBoard = {
+  revision: 3,
+  groups: [
+    {
+      id: "a",
+      name: "개발",
+      collapsed: false,
+      links: [
+        { id: "one", name: "첫 번째", url: "https://example.com/one" },
+        { id: "two", name: "두 번째", url: "https://example.com/two" },
+      ],
+    },
+    { id: "b", name: "빈 분류", collapsed: true, links: [] },
+  ],
+};
+
+describe("바로가기 URL", () => {
+  it("도메인, 내부망·IPv6·포트와 경로를 보존한다", () => {
+    expect(normalizeShortcutUrl(" github.com ")).toBe("https://github.com/");
+    expect(normalizeShortcutUrl("http://192.168.1.200:8080/a?q=1#top")).toBe(
+      "http://192.168.1.200:8080/a?q=1#top",
+    );
+    expect(normalizeShortcutUrl("localhost:8080/path")).toBe("https://localhost:8080/path");
+    expect(normalizeShortcutUrl("http://[::1]:8080/path")).toBe("http://[::1]:8080/path");
+    expect(normalizeShortcutUrl("https://한글.kr/경로")).toContain("xn--");
+  });
+  it.each([
+    "",
+    "javascript:alert(1)",
+    "data:text/html,test",
+    "file:///tmp/test",
+    "https://user:password@example.com",
+    "https://example.com\n/",
+    "https://",
+    "https://a.com/" + "a".repeat(2048),
+  ])("안전하지 않거나 잘못된 URL을 거부한다 %s", (value) => {
+    expect(() => normalizeShortcutUrl(value)).toThrow();
+  });
+});
+
+describe("바로가기 배치", () => {
+  it("같은 분류의 순서를 옮기고 원본을 보존한다", () => {
+    const moved = moveShortcut(board, "one", "a", "two");
+    expect(moved.groups[0]?.links.map((link) => link.id)).toEqual(["two", "one"]);
+    expect(board.groups[0]?.links.map((link) => link.id)).toEqual(["one", "two"]);
+    expect(moved.revision).toBe(3);
+  });
+  it("비어 있고 접힌 분류로 이동할 때 항목을 정확히 한 번 보존한다", () => {
+    const moved = moveShortcut(board, "one", "b");
+    expect(moved.groups[0]?.links.map((link) => link.id)).toEqual(["two"]);
+    expect(moved.groups[1]?.links.map((link) => link.id)).toEqual(["one"]);
+    expect(moved.groups[1]?.collapsed).toBe(true);
+    expect(moved.groups.flatMap((group) => group.links)).toHaveLength(2);
+    expect(moveShortcut(board, "missing", "b")).toBe(board);
+  });
+});
+
+describe("동시 편집 초안 조정", () => {
+  it("로컬 순서·이동·이름 수정과 서버 추가·필드 수정을 함께 보존한다", () => {
+    const draft = moveShortcut(structuredClone(board), "two", "b");
+    draft.groups[1]!.links[0]!.name = "내 이름";
+    const latest = structuredClone(board);
+    latest.revision = 8;
+    latest.groups[0]!.links[1]!.url = "https://example.com/updated";
+    latest.groups[0]!.links.push({ id: "three", name: "추가", url: "https://example.com/3" });
+    const result = reconcileShortcutBoard(board, draft, latest);
+    expect(result.revision).toBe(8);
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one", "three"]);
+    expect(result.groups[1]!.links).toEqual([
+      { id: "two", name: "내 이름", url: "https://example.com/updated" },
+    ]);
+    expect(board.groups[0]!.links).toHaveLength(2);
+  });
+
+  it("양쪽의 삭제를 반영하고 수정하지 않은 서버 순서를 보존한다", () => {
+    const draft = structuredClone(board);
+    draft.groups[0]!.links = draft.groups[0]!.links.filter((link) => link.id !== "one");
+    const latest = structuredClone(board);
+    latest.groups[0]!.links = latest.groups[0]!.links.filter((link) => link.id !== "two");
+    latest.groups.reverse();
+    const result = reconcileShortcutBoard(board, draft, latest);
+    expect(result.groups.map((group) => group.id)).toEqual(["b", "a"]);
+    expect(result.groups.flatMap((group) => group.links)).toEqual([]);
+  });
+
+  it("로컬 재정렬 중 서버에서 추가한 항목도 보존한다", () => {
+    const draft = moveShortcut(board, "two", "a", "one");
+    const latest = structuredClone(board);
+    latest.groups[0]!.links.push({ id: "three", name: "추가", url: "https://example.com/3" });
+    const result = reconcileShortcutBoard(board, draft, latest);
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one", "three"]);
+  });
+
+  it("같은 필드의 충돌은 초안을 우선하고 원격 분류 삭제와 새 분류를 반영한다", () => {
+    const draft = structuredClone(board);
+    draft.groups[0]!.name = "로컬";
+    const latest = structuredClone(board);
+    latest.groups[0]!.name = "원격";
+    latest.groups.splice(1, 1, { id: "new", name: "새 분류", collapsed: false, links: [] });
+    const result = reconcileShortcutBoard(board, draft, latest);
+    expect(result.groups.map((group) => group.id)).toEqual(["a", "new"]);
+    expect(result.groups[0]!.name).toBe("로컬");
+  });
+});
+
+it("빈 분류 삭제와 다른 탭의 이동이 겹쳐도 바로가기를 원래 분류에 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = draft.groups.filter((group) => group.id !== "b");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision = 4;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["a"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["two", "one"]);
+  expect(new Set(result.groups.flatMap((group) => group.links.map((link) => link.id))).size).toBe(
+    2,
+  );
+});
+
+it("링크 소속 변경만으로 삭제된 분류를 복원하지 않는다", () => {
+  const draft = moveShortcut(structuredClone(board), "one", "b");
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["a"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two"]);
+});
+
+it("모든 분류 삭제 후에도 새로 추가된 바로가기를 담을 분류를 복원한다", () => {
+  const draft = { ...board, groups: [] };
+  const latest = structuredClone(board);
+  latest.groups[1]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups).toEqual([
+    { ...board.groups[1], links: [{ id: "new", name: "새 링크", url: "https://example.com/new" }] },
+  ]);
+});
+
+it("원래 분류도 삭제됐다면 새 바로가기를 첫 번째 남은 분류로 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = [{ id: "remaining", name: "남은 분류", collapsed: false, links: [] }];
+  const latest = structuredClone(board);
+  latest.groups[1]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
+});
+
+it("서로 다른 바로가기와 분류의 순서 변경을 함께 보존한다", () => {
+  const ids = ["a", "b", "c", "d"];
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ids.map((id) => ({
+      id,
+      name: id,
+      collapsed: false,
+      links: ids.map((link) => ({ id: `${id}-${link}`, name: link, url: "https://example.com/" })),
+    })),
+  };
+  const draft = structuredClone(base);
+  [draft.groups[0], draft.groups[1]] = [draft.groups[1]!, draft.groups[0]!];
+  const localLinks = draft.groups.find((group) => group.id === "a")!.links;
+  [localLinks[0], localLinks[1]] = [localLinks[1]!, localLinks[0]!];
+  const latest = structuredClone(base);
+  [latest.groups[2], latest.groups[3]] = [latest.groups[3]!, latest.groups[2]!];
+  const remoteLinks = latest.groups[0]!.links;
+  [remoteLinks[2], remoteLinks[3]] = [remoteLinks[3]!, remoteLinks[2]!];
+  latest.revision = 2;
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b", "a", "d", "c"]);
+  expect(result.groups.find((group) => group.id === "a")!.links.map((link) => link.id)).toEqual([
+    "a-b",
+    "a-a",
+    "a-d",
+    "a-c",
+  ]);
+});
+
+it("4개 항목의 모든 편집 조합에서 양쪽이 바꾼 상대 순서를 보존한다", () => {
+  const permutations = (ids: string[]): string[][] =>
+    ids.length === 0
+      ? [[]]
+      : ids.flatMap((id) =>
+          permutations(ids.filter((item) => item !== id)).map((rest) => [id, ...rest]),
+        );
+  const ids = ["a", "b", "c", "d"];
+  const makeBoard = (order: string[]): ShortcutBoard => ({
+    revision: 1,
+    groups: order.map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  });
+  for (const local of permutations(ids)) {
+    for (const remote of permutations(ids)) {
+      const result = reconcileShortcutBoard(makeBoard(ids), makeBoard(local), makeBoard(remote));
+      const order = result.groups.map((group) => group.id);
+      for (let first = 0; first < ids.length; first++) {
+        for (let second = first + 1; second < ids.length; second++) {
+          const a = ids[first]!,
+            b = ids[second]!;
+          if (local.indexOf(a) > local.indexOf(b) || remote.indexOf(a) > remote.indexOf(b))
+            expect(order.indexOf(a)).toBeGreaterThan(order.indexOf(b));
+        }
+      }
+      expect(new Set(order).size).toBe(4);
+    }
+  }
+});
+
+it("새 항목 삽입이 다른 탭에서 이미 바꾼 기존 항목의 상대 순서를 덮어쓰지 않는다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ["a", "b"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  };
+  const draft = structuredClone(base);
+  draft.groups.splice(1, 0, { id: "new", name: "새 분류", collapsed: false, links: [] });
+  const latest = structuredClone(base);
+  latest.groups.reverse();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b", "a", "new"]);
+  const inverse = reconcileShortcutBoard(base, latest, draft);
+  const ids = inverse.groups.map((group) => group.id);
+  expect(ids.indexOf("b")).toBeLessThan(ids.indexOf("a"));
+  expect(ids).toContain("new");
+});
+
+it("링크를 밖으로 옮긴 분류가 다른 탭에서 삭제되면 빈 분류로 되살리지 않는다", () => {
+  const draft = moveShortcut(structuredClone(board), "one", "b");
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "a");
+  latest.revision = 8;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+  expect(result.revision).toBe(8);
+});
+
+it("분류 이름 수정만으로 서버에서 삭제한 분류를 복원하지 않는다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.name = "수정한 이름";
+  const latest = structuredClone(board);
+  latest.groups = latest.groups.filter((group) => group.id !== "a");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.some((group) => group.id === "a")).toBe(false);
+});
+
+it("모든 분류가 삭제됐을 때 남은 새 링크에 필요한 분류 속성만 복원한다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.name = "수정한 이름";
+  draft.groups[0]!.links.push({ id: "new", name: "새 링크", url: "https://example.com/new" });
+  const latest: ShortcutBoard = { revision: 8, groups: [] };
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups).toHaveLength(1);
+  expect(result.groups[0]!.name).toBe("수정한 이름");
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["new"]);
+});
+
+it("분류 삭제로 초안에서 빠진 링크라도 서버에서 다른 분류로 이동했으면 보존한다", () => {
+  const draft = structuredClone(board);
+  draft.groups = draft.groups.filter((group) => group.id !== "a");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision = 4;
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["b"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+  expect(result.revision).toBe(4);
+});
+
+it("개별 삭제한 링크는 같은 분류가 남아 있다면 삭제 의도를 유지한다", () => {
+  const draft = structuredClone(board);
+  draft.groups[0]!.links = draft.groups[0]!.links.filter((link) => link.id !== "one");
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(["two"]);
+});
+
+it("이동한 링크의 대상 분류까지 삭제됐다면 남은 분류로 보존한다", () => {
+  const draft: ShortcutBoard = {
+    revision: board.revision,
+    groups: [{ id: "remaining", name: "남은 분류", collapsed: false, links: [] }],
+  };
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  const result = reconcileShortcutBoard(board, draft, latest);
+  expect(result.groups.map((group) => group.id)).toEqual(["remaining"]);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one"]);
+});
+
+it.each([
+  ["https://example.com/a[b]", "https://example.com/a%5Bb%5D"],
+  ["http://[2001:db8::1]/a[b]", "http://[2001:db8::1]/a%5Bb%5D"],
+  ["https://example.com/a%2Fb?x=%5B", "https://example.com/a%2Fb?x=%5B"],
+  [
+    "https://example.com/%zz?q=[x]|y#x[y]#z",
+    "https://example.com/%25zz?q=%5Bx%5D%7Cy#x%5By%5D%23z",
+  ],
+])("브라우저 URL을 API URI에서도 처리 가능한 형식으로 정규화한다 %s", (input, expected) => {
+  expect(normalizeShortcutUrl(input)).toBe(expected);
+});
+
+it.each([
+  "https://foo_bar/",
+  "https://-host/",
+  "https://host-/",
+  "https://example.1a/",
+  "https://foo..bar/",
+])("API에서 표현할 수 없는 호스트는 추가 전에 거부한다 %s", (url) => {
+  expect(() => normalizeShortcutUrl(url)).toThrow("호스트 주소");
+});
+
+it("개별 링크 삭제 후 원래 분류를 삭제해도 개별 삭제 의도를 유지한다", () => {
+  const draft: ShortcutBoard = {
+    revision: board.revision,
+    groups: [structuredClone(board.groups[1]!)],
+  };
+  const latest = moveShortcut(structuredClone(board), "one", "b");
+  latest.revision++;
+  const deleted = new Set(["one"]);
+  const result = reconcileShortcutBoard(board, draft, latest, deleted);
+  expect(result.groups.flatMap((group) => group.links)).toEqual([]);
+  const next = moveShortcut(latest, "one", "a");
+  next.revision++;
+  expect(
+    reconcileShortcutBoard(latest, result, next, deleted).groups.flatMap((group) => group.links),
+  ).toEqual([]);
+});
+
+it.each(["unchanged", "name", "url", "group"])(
+  "자동 배치 후 반복 병합은 실제로 편집한 링크만 원격 삭제보다 우선한다 %s",
+  (edit) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: ["a", "b", "c"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    };
+    const draft = structuredClone(base);
+    draft.groups.shift();
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const merged = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+    expect(placements.get("x")?.groupId).toBe("b");
+    if (edit === "name") merged.groups[0]!.links[0]!.name = "직접 수정";
+    if (edit === "url") merged.groups[0]!.links[0]!.url = "https://example.com/edited";
+    const local = edit === "group" ? moveShortcut(merged, "x", "c") : merged;
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(latest, local, removed, new Set(), placements);
+    expect(next.groups.flatMap((group) => group.links)).toHaveLength(edit === "unchanged" ? 0 : 1);
+    expect(placements.size).toBe(0);
+  },
+);
+
+it("명시적인 이동의 대상이 사라져 자동 배치해도 직접 이동 의도를 유지한다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: ["a", "b", "c"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+  };
+  base.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+  const draft = moveShortcut(base, "x", "c");
+  draft.groups = draft.groups.filter((group) => group.id !== "a");
+  const latest = structuredClone(base);
+  latest.groups.pop();
+  latest.revision++;
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const moved = new Map<string, string>();
+  recordShortcutMoves(base, draft, moved);
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(merged.groups[0]!.id).toBe("b");
+  expect(placements.get("x")?.groupId).toBe("b");
+  const removed = structuredClone(latest);
+  removed.groups[0]!.links = [];
+  removed.revision++;
+  const next = reconcileShortcutBoard(
+    latest,
+    merged,
+    removed,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(next.groups[0]!.links[0]!.id).toBe("x");
+});
+
+it.each([false, true])(
+  "임시 복원한 분류는 삭제 의도를 유지하며 남은 링크에만 필요하다 %s",
+  (addLocalLink) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(restored.groups[0]!.links[0]!.id).toBe("x");
+    if (addLocalLink)
+      restored.groups[0]!.links.push({ id: "y", name: "Y", url: "https://example.com/Y" });
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      restored,
+      removed,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(next.groups).toHaveLength(addLocalLink ? 1 : 0);
+    if (addLocalLink) expect(next.groups[0]!.links.map((link) => link.id)).toEqual(["y"]);
+  },
+);
+
+it.each([false, true])(
+  "임시 복원 분류에서 뒤늦게 원격 이동한 링크도 개별 삭제 의도에 따라 처리한다 %s",
+  (explicitDelete) => {
+    const x = { id: "x", name: "X", url: "https://example.com/X" };
+    const y = { id: "y", name: "Y", url: "https://example.com/Y" };
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [x] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push(y);
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedLinks = new Set(explicitDelete ? ["x"] : []);
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(restored.groups[0]!.id).toBe("a");
+    expect(restored.groups[0]!.links.map((link) => link.id)).toEqual(["y"]);
+    const moved: ShortcutBoard = {
+      revision: 3,
+      groups: [
+        { ...latest.groups[0]!, links: [y] },
+        { id: "b", name: "B", collapsed: false, links: [{ ...x, name: "원격 수정 X" }] },
+      ],
+    };
+    const merged = reconcileShortcutBoard(
+      latest,
+      restored,
+      moved,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(merged.groups.map((group) => group.id)).toEqual(["b"]);
+    expect(merged.groups[0]!.links.map((link) => link.id).sort()).toEqual(
+      explicitDelete ? ["y"] : ["x", "y"],
+    );
+    if (!explicitDelete)
+      expect(merged.groups[0]!.links.find((link) => link.id === "x")!.name).toBe("원격 수정 X");
+    const removedY: ShortcutBoard = { ...structuredClone(moved), revision: 4 };
+    removedY.groups[0]!.links = [];
+    const final = reconcileShortcutBoard(
+      moved,
+      merged,
+      removedY,
+      deletedLinks,
+      placements,
+      deletedGroups,
+    );
+    expect(final.groups.map((group) => group.id)).toEqual(["b"]);
+    expect(final.groups[0]!.links.map((link) => link.id)).toEqual(explicitDelete ? [] : ["x"]);
+  },
+);
+
+it.each(["name", "collapsed", "both"])(
+  "임시 복원 분류의 병합된 속성도 후속 충돌에서 유지한다 %s",
+  (field) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [{ id: "a", name: "A", collapsed: false, links: [] }],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links.push({ id: "x", name: "X", url: "https://example.com/X" });
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: [] },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    if (field !== "collapsed") restored.groups[0]!.name = "직접 수정 A";
+    if (field !== "name") restored.groups[0]!.collapsed = true;
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[0]!.name = "서버 수정 A";
+    updated.groups[0]!.collapsed = field === "name";
+    updated.groups[0]!.links[0]!.name = "서버 수정 X";
+    const merged = reconcileShortcutBoard(
+      latest,
+      restored,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(merged.groups[0]!.name).toBe(field === "collapsed" ? "서버 수정 A" : "직접 수정 A");
+    expect(merged.groups[0]!.collapsed).toBe(true);
+    expect(merged.groups[0]!.links[0]!.name).toBe("서버 수정 X");
+    const removed = structuredClone(updated);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    expect(
+      reconcileShortcutBoard(updated, merged, removed, new Set(), placements, deletedGroups).groups,
+    ).toEqual([]);
+  },
+);
+
+it.each([false, true])(
+  "직접 이동의 대체 배치가 원래 분류여도 이동 기록을 보존한다 %s",
+  (deleteLink) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        { id: "b", name: "B", collapsed: false, links: [] },
+      ],
+    };
+    const draft = moveShortcut(base, "x", "b");
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups.pop();
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const moved = new Map<string, string>();
+    recordShortcutMoves(base, draft, moved);
+    const deleted = new Set<string>();
+    const merged = reconcileShortcutBoard(
+      base,
+      draft,
+      latest,
+      deleted,
+      placements,
+      new Set(),
+      moved,
+    );
+    expect(moved.has("x")).toBe(true);
+    expect(merged.groups[0]!.id).toBe("a");
+    expect(merged.groups[0]!.links[0]!.id).toBe("x");
+    if (deleteLink) {
+      deleted.add("x");
+      merged.groups[0]!.links = [];
+    }
+    const removed = structuredClone(latest);
+    removed.revision++;
+    removed.groups[0]!.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      merged,
+      removed,
+      deleted,
+      placements,
+      new Set(),
+      moved,
+    );
+    expect(next.groups[0]!.links.map((link) => link.id)).toEqual(deleteLink ? [] : ["x"]);
+  },
+);
+
+it("직접 이동의 원본 분류를 유지하고 사용자가 이동을 되돌리면 기록을 지운다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      {
+        id: "a",
+        name: "A",
+        collapsed: false,
+        links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+      },
+      { id: "b", name: "B", collapsed: false, links: [] },
+      { id: "c", name: "C", collapsed: false, links: [] },
+    ],
+  };
+  const moved = new Map<string, string>();
+  const b = moveShortcut(base, "x", "b");
+  recordShortcutMoves(base, b, moved);
+  expect(moved.get("x")).toBe("a");
+  const c = moveShortcut(b, "x", "c");
+  recordShortcutMoves(b, c, moved);
+  expect(moved.get("x")).toBe("a");
+  recordShortcutMoves(base, base, moved);
+  expect(moved.get("x")).toBe("a");
+  const undone = moveShortcut(c, "x", "a");
+  recordShortcutMoves(c, undone, moved);
+  expect(moved.size).toBe(0);
+});
+
+it.each([false, true])("서버 이동을 수용한 경우에만 이전 이동 기록을 정리한다 %s", (override) => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      {
+        id: "a",
+        name: "A",
+        collapsed: false,
+        links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+      },
+      ...["b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+    ],
+  };
+  const draft = moveShortcut(base, "x", "b");
+  const moved = new Map<string, string>();
+  recordShortcutMoves(base, draft, moved);
+  const latest = structuredClone(base);
+  latest.revision++;
+  latest.groups = latest.groups.filter((group) => group.id !== "b");
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const restored = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(restored.groups[0]!.links[0]!.id).toBe("x");
+  let local = restored;
+  if (override) {
+    local = moveShortcut(restored, "x", "d");
+    recordShortcutMoves(restored, local, moved);
+  }
+  const remote = moveShortcut(latest, "x", "c");
+  remote.revision++;
+  const merged = reconcileShortcutBoard(
+    latest,
+    local,
+    remote,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(moved.has("x")).toBe(override);
+  const deleted = structuredClone(remote);
+  deleted.revision++;
+  for (const group of deleted.groups) group.links = [];
+  const final = reconcileShortcutBoard(
+    remote,
+    merged,
+    deleted,
+    new Set(),
+    placements,
+    new Set(),
+    moved,
+  );
+  expect(final.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(
+    override ? ["x"] : [],
+  );
+});
+
+it.each(["missing-target", "existing-target", "deleted-server-group"])(
+  "선택한 이동 대상이 사라지면 유효한 서버 위치를 대체 배치로 우선한다 %s",
+  (mode) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        {
+          id: "a",
+          name: "A",
+          collapsed: false,
+          links: [{ id: "x", name: "X", url: "https://example.com/X" }],
+        },
+        ...["b", "c", "d"].map((id) => ({ id, name: id, collapsed: false, links: [] })),
+      ],
+    };
+    const draft = moveShortcut(base, "x", "b");
+    const moved = new Map<string, string>();
+    recordShortcutMoves(base, draft, moved);
+    if (mode === "deleted-server-group")
+      draft.groups = draft.groups.filter((group) => group.id !== "c");
+    const latest = moveShortcut(base, "x", "c");
+    latest.revision++;
+    if (mode !== "existing-target")
+      latest.groups = latest.groups.filter((group) => group.id !== "b");
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedGroups = new Set(mode === "deleted-server-group" ? ["c"] : []);
+    const merged = reconcileShortcutBoard(
+      base,
+      draft,
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      moved,
+    );
+    const destination = merged.groups.find((group) =>
+      group.links.some((link) => link.id === "x"),
+    )!.id;
+    expect(destination).toBe(
+      mode === "missing-target" ? "c" : mode === "existing-target" ? "b" : "a",
+    );
+    expect(placements.get("x")?.groupId).toBe(mode === "existing-target" ? undefined : destination);
+    expect(moved.has("x")).toBe(mode !== "missing-target");
+    const deleted = structuredClone(latest);
+    deleted.revision++;
+    for (const group of deleted.groups) group.links = [];
+    const next = reconcileShortcutBoard(
+      latest,
+      merged,
+      deleted,
+      new Set(),
+      placements,
+      deletedGroups,
+      moved,
+    );
+    expect(next.groups.flatMap((group) => group.links).map((link) => link.id)).toEqual(
+      mode === "missing-target" ? [] : ["x"],
+    );
+  },
+);
+
+it.each([
+  ["three", "one", "two"],
+  ["two", "three", "one"],
+  ["three", "two", "one"],
+])("이동 대상 분류 삭제 시 서버의 저장 순서를 보존한다 %j", (...savedOrder) => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push({ id: "three", name: "세 번째", url: "https://example.com/3" });
+  const draft = moveShortcut(base, "three", "b");
+  const latest = structuredClone(base);
+  latest.revision++;
+  const byId = new Map(latest.groups[0]!.links.map((link) => [link.id, link]));
+  latest.groups[0]!.links = savedOrder.map((id) => byId.get(id)!);
+  latest.groups.pop();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups).toHaveLength(1);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(savedOrder);
+});
+
+it("이동 대상 분류 삭제 시 서버 위치와 독립적인 로컬 순서 변경을 합친다", () => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push({ id: "three", name: "세 번째", url: "https://example.com/3" });
+  const moved = moveShortcut(base, "three", "b");
+  const draft = moveShortcut(moved, "two", "a", "one");
+  const latest = moveShortcut(base, "three", "a", "one");
+  latest.revision++;
+  latest.groups.pop();
+  const result = reconcileShortcutBoard(base, draft, latest);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["three", "two", "one"]);
+});
+
+it.each([
+  { local: ["one", "two", "x"], remote: ["x", "one", "two"], expected: ["one", "two", "x"] },
+  { local: ["x", "one", "two"], remote: ["one", "two", "x"], expected: ["x", "one", "two"] },
+  { local: ["one", "x", "two"], remote: ["x", "one", "two"], expected: ["one", "x", "two"] },
+  { local: ["one", "two", "x"], remote: ["x", "two", "one"], expected: ["two", "one", "x"] },
+])(
+  "같은 기존 링크의 직접 이동 위치는 초안을 우선한다 $local / $remote",
+  ({ local, remote, expected }) => {
+    const base = structuredClone(board);
+    const x = { id: "x", name: "이동 링크", url: "https://example.com/x" };
+    base.groups[1]!.links = [x];
+    const byId = new Map([...base.groups[0]!.links, x].map((link) => [link.id, link]));
+    const draft = moveShortcut(base, "x", "a");
+    draft.groups[0]!.links = local.map((id) => byId.get(id)!);
+    const latest = moveShortcut(base, "x", "a");
+    latest.groups[0]!.links = remote.map((id) => byId.get(id)!);
+    latest.revision++;
+    const result = reconcileShortcutBoard(base, draft, latest);
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(expected);
+  },
+);
+
+it("이전 자동 배치 위치는 후속 충돌에서도 서버 순서를 따른다", () => {
+  const base = structuredClone(board);
+  const x = { id: "x", name: "자동 배치 링크", url: "https://example.com/x" };
+  base.groups[1]!.links = [x];
+  const draft = moveShortcut(base, "x", "a");
+  const latest = moveShortcut(base, "x", "a", "one");
+  latest.revision++;
+  const placements = new Map([["x", { groupId: "a", order: ["one", "two", "x"] }]]);
+  const result = reconcileShortcutBoard(base, draft, latest, new Set(), placements);
+  expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["x", "one", "two"]);
+});
+
+it.each(["front", "middle", "unrelated", "remote-move", "remote-delete"])(
+  "자동 배치 후 직접 정렬한 위치를 반복 충돌에서 처리한다 %s",
+  (mode) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links = [x];
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const draft = moveShortcut(
+      restored,
+      mode === "unrelated" ? "two" : "x",
+      "b",
+      mode === "middle" ? "two" : "one",
+    );
+    recordShortcutMoves(
+      restored,
+      draft,
+      origins,
+      reordered,
+      placements,
+      mode === "unrelated" ? "two" : "x",
+    );
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[1]!.links[1]!.name = "서버 수정";
+    if (mode === "remote-move") updated.groups[2]!.links = [x];
+    if (mode.startsWith("remote-")) updated.groups[0]!.links = [];
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const expected =
+      mode === "middle"
+        ? ["one", "x", "two"]
+        : mode === "unrelated"
+          ? ["two", "one", "x"]
+          : mode.startsWith("remote-")
+            ? ["one", "two"]
+            : ["x", "one", "two"];
+    expect(merged.groups.find((group) => group.id === "b")!.links.map((link) => link.id)).toEqual(
+      expected,
+    );
+    expect(
+      merged.groups.find((group) => group.id === "b")!.links.find((link) => link.id === "two")!
+        .name,
+    ).toBe("서버 수정");
+    expect(merged.groups.find((group) => group.id === "c")!.links).toEqual(
+      mode === "remote-move" ? [x] : [],
+    );
+    const third = structuredClone(updated);
+    third.revision++;
+    third.groups[1]!.links[1]!.name = "다시 서버 수정";
+    const final = reconcileShortcutBoard(
+      updated,
+      merged,
+      third,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(final.groups.find((group) => group.id === "b")!.links.map((link) => link.id)).toEqual(
+      expected,
+    );
+    if (mode.startsWith("remote-")) expect(reordered.has("x")).toBe(false);
+  },
+);
+
+it("서버가 직접 정렬 위치를 수용하면 이전 기록으로 새 서버 순서를 덮어쓰지 않는다", () => {
+  const base = structuredClone(board);
+  const reordered = new Map<string, string>();
+  const origins = new Map<string, string>();
+  const draft = moveShortcut(base, "two", "a", "one");
+  const placements = new Map([["two", { groupId: "a", order: ["one", "two"] }]]);
+  recordShortcutMoves(base, draft, origins, reordered, placements, "two");
+  expect(reordered.size).toBe(1);
+  const saved = { ...structuredClone(draft), revision: base.revision + 1 };
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    saved,
+    new Set(),
+    new Map(),
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(reordered.size).toBe(0);
+  const updated = { ...structuredClone(base), revision: saved.revision + 1 };
+  const final = reconcileShortcutBoard(
+    saved,
+    merged,
+    updated,
+    new Set(),
+    new Map(),
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(final.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two"]);
+});
+
+it.each([false, true])("일반 정렬은 최종 초안의 변경된 상대 순서만 반영한다 되돌림 %s", (undo) => {
+  const base = structuredClone(board);
+  base.groups[0]!.links.push(
+    { id: "three", name: "세 번째", url: "https://example.com/3" },
+    { id: "four", name: "네 번째", url: "https://example.com/4" },
+  );
+  const origins = new Map<string, string>();
+  const reordered = new Map<string, string>();
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const changed = moveShortcut(base, "two", "a", "one");
+  recordShortcutMoves(base, changed, origins, reordered, placements);
+  const draft = undo ? moveShortcut(changed, "two", "a", "one") : changed;
+  recordShortcutMoves(changed, draft, origins, reordered, placements);
+  const latest = structuredClone(base);
+  latest.revision++;
+  const savedOrder = undo ? ["two", "one", "three", "four"] : ["one", "three", "two", "four"];
+  const byId = new Map(base.groups[0]!.links.map((link) => [link.id, link]));
+  latest.groups[0]!.links = savedOrder.map((id) => byId.get(id)!);
+  const merged = reconcileShortcutBoard(
+    base,
+    draft,
+    latest,
+    new Set(),
+    placements,
+    new Set(),
+    origins,
+    reordered,
+  );
+  expect(merged.groups[0]!.links.map((link) => link.id)).toEqual(
+    undo ? savedOrder : ["three", "two", "one", "four"],
+  );
+  expect(reordered.size).toBe(0);
+});
+
+it.each(["other-link", "undo"])("자동 배치의 실제 드래그 대상과 되돌림을 구분한다 %s", (mode) => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      { id: "a", name: "A", collapsed: false, links: [] },
+      { ...structuredClone(board.groups[0]!), id: "b" },
+    ],
+  };
+  const latest = structuredClone(base);
+  latest.revision++;
+  const x = { id: "x", name: "X", url: "https://example.com/x" };
+  latest.groups[0]!.links = [x];
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const origins = new Map<string, string>();
+  const reordered = new Map<string, string>();
+  const deletedGroups = new Set(["a"]);
+  const restored = reconcileShortcutBoard(
+    base,
+    { ...base, groups: base.groups.slice(1) },
+    latest,
+    new Set(),
+    placements,
+    deletedGroups,
+    origins,
+    reordered,
+  );
+  const dragged = mode === "other-link" ? "one" : "x";
+  let draft = moveShortcut(restored, dragged, "b", mode === "undo" ? "one" : undefined);
+  recordShortcutMoves(restored, draft, origins, reordered, placements, dragged);
+  if (mode === "undo") {
+    const returned = moveShortcut(draft, "x", "b");
+    recordShortcutMoves(draft, returned, origins, reordered, placements, "x");
+    draft = returned;
+  }
+  const saved = moveShortcut(latest, "x", "b", "one");
+  saved.revision++;
+  const merged = reconcileShortcutBoard(
+    latest,
+    draft,
+    saved,
+    new Set(),
+    placements,
+    deletedGroups,
+    origins,
+    reordered,
+  );
+  expect(merged.groups[0]!.links.map((link) => link.id)).toEqual(
+    mode === "undo" ? ["x", "one", "two"] : ["x", "two", "one"],
+  );
+  expect(reordered.has("x")).toBe(false);
+});
+
+it.each([false, true])(
+  "자동 배치 기준에 새로 병합된 이웃을 포함한다 기존 정렬 %s",
+  (previousEdit) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+      ],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const y = { id: "y", name: "Y", url: "https://example.com/y" };
+    latest.groups[0]!.links = [x];
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    let draft = previousEdit ? moveShortcut(restored, "x", "b", "one") : restored;
+    if (previousEdit) recordShortcutMoves(restored, draft, origins, reordered, placements, "x");
+    const added = structuredClone(latest);
+    added.revision++;
+    added.groups[1]!.links.push(y);
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      added,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(placements.get("x")?.order).toEqual(["one", "two", "y", "x"]);
+    draft = moveShortcut(merged, "x", "b", previousEdit ? "two" : "y");
+    recordShortcutMoves(merged, draft, origins, reordered, placements, "x");
+    expect(reordered.get("x")).toBe("b");
+    const updated = structuredClone(added);
+    updated.revision++;
+    updated.groups[1]!.collapsed = true;
+    const result = reconcileShortcutBoard(
+      added,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(result.groups[0]!.links.map((link) => link.id)).toEqual(["one", "two", "x", "y"]);
+    expect(result.groups[0]!.collapsed).toBe(true);
+    expect(placements.get("x")?.order).toEqual(["one", "two", "y", "x"]);
+    const undone = moveShortcut(result, "x", "b");
+    recordShortcutMoves(result, undone, origins, reordered, placements, "x");
+    expect(reordered.has("x")).toBe(false);
+  },
+);
+
+it.each(["front", "middle", "baseline"])(
+  "자동 배치 분류로 되돌릴 때 지정한 위치를 보존한다 %s",
+  (position) => {
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { ...structuredClone(board.groups[0]!), id: "b" },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const latest = structuredClone(base);
+    latest.revision++;
+    latest.groups[0]!.links = [{ id: "x", name: "X", url: "https://example.com/x" }];
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const origins = new Map<string, string>();
+    const reordered = new Map<string, string>();
+    const deletedGroups = new Set(["a"]);
+    const restored = reconcileShortcutBoard(
+      base,
+      { ...base, groups: base.groups.slice(1) },
+      latest,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    const away = moveShortcut(restored, "x", "c");
+    recordShortcutMoves(restored, away, origins, reordered, placements, "x");
+    const draft = moveShortcut(
+      away,
+      "x",
+      "b",
+      position === "front" ? "one" : position === "middle" ? "two" : undefined,
+    );
+    recordShortcutMoves(away, draft, origins, reordered, placements, "x");
+    expect(origins.has("x")).toBe(false);
+    expect(reordered.has("x")).toBe(position !== "baseline");
+    const updated = structuredClone(latest);
+    updated.revision++;
+    updated.groups[2]!.collapsed = true;
+    const merged = reconcileShortcutBoard(
+      latest,
+      draft,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+      origins,
+      reordered,
+    );
+    expect(merged.groups[0]!.links.map((link) => link.id)).toEqual(
+      position === "front"
+        ? ["x", "one", "two"]
+        : position === "middle"
+          ? ["one", "x", "two"]
+          : ["one", "two", "x"],
+    );
+    expect(merged.groups[1]!.collapsed).toBe(true);
+  },
+);
+
+it("지원 한도 200개 자동 배치를 반복 전체 정렬 없이 병합한다", () => {
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [
+      { id: "a", name: "A", collapsed: false, links: [] },
+      { id: "b", name: "B", collapsed: false, links: [] },
+    ],
+  };
+  const latest = structuredClone(base);
+  latest.revision++;
+  latest.groups[0]!.links = Array.from({ length: 200 }, (_, index) => ({
+    id: `link-${index}`,
+    name: `링크 ${index}`,
+    url: `https://example.com/${index}`,
+  }));
+  const placements = new Map<string, AutomaticShortcutPlacement>();
+  const deletedGroups = new Set(["a"]);
+  let started = performance.now();
+  let merged = reconcileShortcutBoard(
+    base,
+    { ...base, groups: base.groups.slice(1) },
+    latest,
+    new Set(),
+    placements,
+    deletedGroups,
+  );
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(merged.groups[0]!.links).toEqual(latest.groups[0]!.links);
+  const updated = structuredClone(latest);
+  updated.revision++;
+  updated.groups[1]!.name = "서버 수정";
+  started = performance.now();
+  merged = reconcileShortcutBoard(latest, merged, updated, new Set(), placements, deletedGroups);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(merged.groups[0]!.name).toBe("서버 수정");
+  const replaced = structuredClone(updated);
+  replaced.revision++;
+  replaced.groups[0]!.links[199] = { id: "new", name: "새 이웃", url: "https://example.com/new" };
+  started = performance.now();
+  merged = reconcileShortcutBoard(updated, merged, replaced, new Set(), placements, deletedGroups);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(merged.groups[0]!.links).toEqual(replaced.groups[0]!.links);
+  const expected = merged.groups[0]!.links.map((link) => link.id);
+  expect(placements.size).toBe(200);
+  for (const placement of placements.values()) expect(placement.order).toEqual(expected);
+});
+
+it.each(["retained", "missing", "server-move", "deleted"])(
+  "후속 충돌에서 이전 자동 배치 분류를 처리한다 %s",
+  (mode) => {
+    const x = { id: "x", name: "X", url: "https://example.com/x" };
+    const base: ShortcutBoard = {
+      revision: 1,
+      groups: [
+        { id: "a", name: "A", collapsed: false, links: [] },
+        { id: "b", name: "B", collapsed: false, links: [x] },
+        { id: "c", name: "C", collapsed: false, links: [] },
+      ],
+    };
+    const draft = { ...structuredClone(base), groups: structuredClone(base.groups.slice(0, 2)) };
+    const latest = moveShortcut(base, "x", "c");
+    latest.revision++;
+    const placements = new Map<string, AutomaticShortcutPlacement>();
+    const deletedGroups = new Set(["c"]);
+    const first = reconcileShortcutBoard(base, draft, latest, new Set(), placements, deletedGroups);
+    expect(first.groups.find((group) => group.id === "b")!.links).toEqual([x]);
+    const next = structuredClone(latest);
+    next.revision++;
+    next.groups[0]!.name = "서버 A";
+    if (mode === "missing") next.groups = next.groups.filter((group) => group.id !== "b");
+    if (mode === "server-move" || mode === "deleted") next.groups[2]!.links = [];
+    if (mode === "server-move") next.groups[0]!.links = [x];
+    const second = reconcileShortcutBoard(
+      latest,
+      first,
+      next,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    const expected = mode === "retained" ? "b" : mode === "deleted" ? undefined : "a";
+    expect(second.groups.find((group) => group.links.some((link) => link.id === "x"))?.id).toBe(
+      expected,
+    );
+    const updated = structuredClone(next);
+    updated.revision++;
+    updated.groups[0]!.name = "다시 서버 A";
+    const third = reconcileShortcutBoard(
+      next,
+      second,
+      updated,
+      new Set(),
+      placements,
+      deletedGroups,
+    );
+    expect(third.groups.find((group) => group.links.some((link) => link.id === "x"))?.id).toBe(
+      expected,
+    );
+    expect(third.groups.some((group) => group.id === "c")).toBe(false);
+  },
+);
+
+it.each([50, 100, 200])("%i개 링크의 순서·분류 속성 충돌을 지연 없이 병합한다", (count) => {
+  const links = Array.from({ length: count }, (_, index) => ({
+    id: `item-${index}`,
+    name: `항목 ${index}`,
+    url: `https://example.com/${index}`,
+  }));
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [{ id: "a", name: "A", collapsed: false, links }],
+  };
+  const draft = structuredClone(base);
+  const latest = structuredClone(base);
+  draft.groups[0]!.links = [...links.slice(count / 2), ...links.slice(0, count / 2)];
+  latest.groups[0]!.links.reverse();
+  let started = performance.now();
+  const merged = reconcileShortcutBoard(base, draft, latest);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(merged.groups[0]!.links).toEqual(latest.groups[0]!.links);
+  draft.groups[0]!.links = links;
+  latest.groups[0]!.links = links;
+  draft.groups[0]!.name = "수정 이름";
+  started = performance.now();
+  const unchangedOrder = reconcileShortcutBoard(base, draft, latest);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(unchangedOrder.groups[0]!.links).toEqual(links);
+  expect(unchangedOrder.groups[0]!.name).toBe("수정 이름");
+});

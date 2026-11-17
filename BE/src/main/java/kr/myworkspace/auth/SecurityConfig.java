@@ -81,7 +81,7 @@ public class SecurityConfig {
             auth ->
                 auth.dispatcherTypeMatchers(DispatcherType.ERROR)
                     .permitAll()
-                    .requestMatchers("/api/auth/**", "/api/health")
+                    .requestMatchers("/api/auth/**", "/api/health", "/api/health/deployment")
                     .permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/site")
                     .permitAll()
@@ -100,6 +100,11 @@ public class SecurityConfig {
                         (req, res, e) -> writeError(res, 403, "CSRF", "요청을 확인하지 못했습니다. 다시 시도하세요.")))
         .addFilterBefore(
             new OncePerRequestFilter() {
+              @Override
+              protected boolean shouldNotFilterAsyncDispatch() {
+                return false;
+              }
+
               @Override
               protected void doFilterInternal(
                   HttpServletRequest req, HttpServletResponse res, FilterChain chain)
