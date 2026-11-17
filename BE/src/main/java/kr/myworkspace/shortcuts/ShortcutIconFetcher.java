@@ -235,6 +235,16 @@ class ShortcutIconFetcher {
             .build()) {
       Set<URI> candidates = new LinkedHashSet<>();
       Unavailable failure = null;
+      URI defaultFavicon = original.resolve("/favicon.ico");
+      try {
+        var result = read(client, resolver, original, defaultFavicon, false, deadline);
+        if (result != null && !defaultIcon(result.uri())) {
+          var icon = ShortcutIconImage.decode(result.bytes());
+          if (icon != null) return icon;
+        }
+      } catch (Unavailable error) {
+        failure = error;
+      }
       Download page = null;
       try {
         page = read(client, resolver, original, original, true, deadline);
@@ -245,7 +255,7 @@ class ShortcutIconFetcher {
         candidates.addAll(candidates(page.uri(), page.bytes()));
         candidates.add(page.uri().resolve("/favicon.ico"));
       }
-      candidates.add(original.resolve("/favicon.ico"));
+      candidates.remove(defaultFavicon);
       for (URI uri : candidates) {
         if (System.nanoTime() >= deadline) {
           failure = new Unavailable(new IOException("Icon fetch deadline"));
