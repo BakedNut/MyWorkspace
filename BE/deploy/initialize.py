@@ -10,8 +10,19 @@ def run(ct, args, data=None):
                           text=True, capture_output=True, check=True).stdout
 
 
-def private_file(ct, path, text, mode=0o600):
+def private_file(ct, path, text, mode=0o600, atomic=False):
     program = "import pathlib,sys,os;p=pathlib.Path(sys.argv[1]);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(sys.stdin.read());p.chmod(int(sys.argv[2]))"
+    if atomic:
+        program = """import os,pathlib,sys,tempfile
+p=pathlib.Path(sys.argv[1]);p.parent.mkdir(parents=True,exist_ok=True)
+fd,name=tempfile.mkstemp(prefix='.'+p.name+'.',dir=p.parent)
+try:
+    with os.fdopen(fd,'w') as output:
+        os.fchmod(output.fileno(),int(sys.argv[2]));output.write(sys.stdin.read());output.flush();os.fsync(output.fileno())
+    os.replace(name,p)
+finally:
+    pathlib.Path(name).unlink(missing_ok=True)
+"""
     run(ct, ["python3", "-c", program, path, str(mode)], text)
 
 

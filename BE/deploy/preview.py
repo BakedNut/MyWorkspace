@@ -7,6 +7,7 @@ import gzip
 import fcntl
 import hashlib
 import json
+import os
 import io
 import shutil
 import signal
@@ -375,6 +376,7 @@ def _deploy(root, frontend_snapshot):
             if run(200, ["sha256sum", destination]).split()[0] != frontend_hashes[path.relative_to(dist)]:
                 raise RuntimeError("Uploaded frontend checksum mismatch")
     previous_guard = read_database_guard()
+    previous_mask = None
     try:
         configure_database_guard(target)
         replace(target, JAR, stamp)
@@ -391,6 +393,8 @@ def _deploy(root, frontend_snapshot):
             raise RuntimeError("Preview web endpoint did not become ready")
         identity = verify_identity()
         verify_frontend(expected_frontend)
+        if threading.current_thread() is threading.main_thread():
+            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
     except BaseException as error:
         handles_signals = threading.current_thread() is threading.main_thread()
         previous_handler = signal.getsignal(signal.SIGTERM) if handles_signals else None
@@ -404,19 +408,34 @@ def _deploy(root, frontend_snapshot):
         if failures:
             raise RuntimeError("Preview rollback incomplete; backup at " + str(snapshot) + ": " + ", ".join(failures)) from error
         raise
-    receipt = dict(**build, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview", backendInstance=identity["instance"])
-    print("Preview deployed", commit, "dirty=" + str(build["backendDirty"] or build["frontendDirty"]).lower())
     try:
-        private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n")
-    except Exception as error:
-        print(f"Warning: release {commit} is active; server deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+        receipt = dict(**build, release=release, jar=target, frontend=frontend, backup=str(snapshot), backendPort=8081, webPort=8088, database="myworkspace_preview", backendInstance=identity["instance"])
+        print("Preview deployed", commit, "dirty=" + str(build["backendDirty"] or build["frontendDirty"]).lower())
+        try:
+            private_file(200, "/opt/myworkspace-preview/deployed-version.json", json.dumps(receipt, indent=2) + "\n", atomic=True)
+        except Exception as error:
+            print(f"Warning: release {commit} is active; server deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+        try:
+            output = root / ".runtime/shortcuts-preview"
+            output.mkdir(parents=True, exist_ok=True, mode=0o700)
+            atomic_receipt(output / "deployment.json", receipt)
+        except Exception as error:
+            print(f"Warning: release {commit} is active; local deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+    finally:
+        if previous_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
+def atomic_receipt(path, receipt):
+    descriptor, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
     try:
-        output = root / ".runtime/shortcuts-preview"
-        output.mkdir(parents=True, exist_ok=True, mode=0o700)
-        (output / "deployment.json").write_text(json.dumps(receipt, indent=2))
-        (output / "deployment.json").chmod(0o600)
-    except Exception as error:
-        print(f"Warning: release {commit} is active; local deployment record write failed ({type(error).__name__}).", file=sys.stderr)
+        with os.fdopen(descriptor, "w") as output:
+            output.write(json.dumps(receipt, indent=2))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def main():
