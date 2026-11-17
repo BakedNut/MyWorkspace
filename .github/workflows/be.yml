@@ -26,6 +26,10 @@ jobs:
           cache: maven
           cache-dependency-path: BE/pom.xml
       - run: ./mvnw --batch-mode verify
+      - name: backup encryption dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes python3-cryptography
       - name: deployment regression tests
         run: sudo python3 -m unittest discover -s deploy -p 'test_*.py' -v
 

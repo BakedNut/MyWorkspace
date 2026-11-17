@@ -41,6 +41,24 @@ python3 BE/deploy/backup.py --verify
 python3 BE/deploy/deploy.py
 ```
 
+운영 백업은 myworkspace.service의 실행 중인 프로세스 환경·명령·계정으로 실제 암호화 키를 읽습니다. 중지 상태이면 systemd 환경 설정을 사용합니다. 일반 백업도 임시 DB에 복원하고 iCloud 자격 증명·현재/등록 중 OTP 암호문의 AES-GCM 인증을 확인한 뒤 게시합니다. 키 교체로 DB 암호문과 맞지 않거나 키를 확보하지 못하면 최종 백업을 게시하지 않습니다. --verify는 기존 테이블·마이그레이션 검증도 추가합니다. SQL은 --hex-blob으로 덤프하고, SQL·키를 비공개 임시 디렉터리에 준비한 뒤 키를 먼저 게시하고 최종 SQL을 완료 표시로 게시합니다. 실패한 새 쌍은 정리하며 최근 완료 백업 14개를 보존합니다. 동시에 실행된 백업은 잠금으로 거부합니다.
+
+백업 도구에는 호스트 Python cryptography와 PreviewKeyBackup을 포함한 빌드 JAR가 필요합니다. 저장소에서 실행하면 BE/target의 빌드를 사용합니다. BACKUP_HELPER_JAR로 별도 빌드를 지정할 수도 있습니다. 헬퍼는 LXC 200의 임시 경로에서 키만 읽고 종료하며 운영 앱의 초기화는 실행하지 않습니다. 기존 앱 JAR에 헬퍼 클래스가 없는 경우에도 별도 빌드를 사용하므로 먼저 백업할 수 있습니다.
+
+기존 일일 백업 서비스를 갱신할 때는 Proxmox 호스트에서 아래 묶음을 설치합니다. 운영 앱의 JAR·서비스를 변경하는 명령은 별도의 운영 배포 절차에 있습니다.
+
+```sh
+apt-get install --yes python3-cryptography
+python3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM'
+install -D -m 600 BE/target/myworkspace-0.0.1-SNAPSHOT.jar /usr/local/share/myworkspace-backup-helper.jar
+install -m 700 BE/deploy/preview_key.py /usr/local/sbin/preview_key.py
+install -m 700 BE/deploy/backup.py /usr/local/sbin/myworkspace-backup.py
+install -m 644 BE/deploy/myworkspace-backup.service /etc/systemd/system/myworkspace-backup.service
+install -m 644 BE/deploy/myworkspace-backup.timer /etc/systemd/system/myworkspace-backup.timer
+systemctl daemon-reload
+systemctl enable --now myworkspace-backup.timer
+```
+
 운영 배포 스크립트는 새 JAR·FE를 준비하고 Nginx 설정을 검사한 뒤 버전을 전환합니다. 백엔드의 정상 시작을 확인한 후 FE 링크와 Nginx를 갱신합니다. 기존 서비스 활성·자동 시작 상태, JAR·FE 링크와 설정을 기록해 실패 시 복구합니다. 복구 실패 시 예외에 표시된 임시 경로에 자료를 보존합니다. [운영 배포 코드](../BE/deploy/deploy.py)
 
 배포 후 서비스를 점검합니다.
