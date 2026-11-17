@@ -6,11 +6,8 @@ import { ApiError, api } from "@/api";
 import { ShortcutBoard } from "@/components/ShortcutBoard";
 import { ShortcutDialog, type ShortcutDialogTarget } from "@/components/ShortcutDialogs";
 import { Button } from "@/components/ui/button";
-import {
-  reconcileShortcutBoard,
-  recordShortcutMoves,
-  type AutomaticShortcutPlacement,
-} from "@/lib/shortcuts";
+import { recordShortcutMoves, type AutomaticShortcutPlacement } from "@/lib/shortcuts";
+import { mergeShortcutBoard } from "@/lib/shortcut-merge";
 import type { ShortcutBoard as Board } from "@/types/domain";
 
 export const Route = createFileRoute("/shortcuts")({
@@ -53,6 +50,8 @@ function ShortcutsPage() {
   const automaticLinkGroups = useRef(new Map<string, AutomaticShortcutPlacement>());
   const reorderedLinkGroups = useRef(new Map<string, string>());
   const [conflict, setConflict] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const [requiresRecreation, setRequiresRecreation] = useState(false);
   const [draft, setDraft] = useState<Board | null>(null);
   const attemptedCreate = useRef<(CreateSubmission & { board: Board; uncertain: boolean }) | null>(
@@ -78,7 +77,7 @@ function ShortcutsPage() {
   });
   const board = draft ?? query.data;
   const editing = draft !== null;
-  const busy = mutation.isPending || query.isFetching;
+  const busy = merging || mutation.isPending || query.isFetching;
   const change = async (next: Board, attempt?: CreateSubmission, movedLinkId?: string) => {
     if (draft) {
       recordShortcutMoves(
@@ -195,44 +194,56 @@ function ShortcutsPage() {
                   if (!draft) return;
                   try {
                     if (conflict && editingBase.current) {
-                      const latest = await queryClient.fetchQuery({
-                        queryKey,
-                        queryFn: () => api.shortcuts.get(),
-                        staleTime: 0,
-                      });
-                      let comparison = editingBase.current;
-                      let merged = latest;
-                      // Preserve each uncertain submission, then edits made after it.
-                      for (const pending of uncertainOrganize.current) {
-                        const submitted = structuredClone(pending);
-                        merged = reconcileShortcutBoard(
-                          comparison,
-                          submitted.board,
-                          merged,
-                          submitted.deletedLinkIds,
-                          submitted.automaticLinkGroups,
-                          submitted.deletedGroupIds,
-                          submitted.movedLinkOrigins,
-                          submitted.reorderedLinkGroups,
+                      setMerging(true);
+                      setMergeError(null);
+                      try {
+                        const latest = await queryClient.fetchQuery({
+                          queryKey,
+                          queryFn: () => api.shortcuts.get(),
+                          staleTime: 0,
+                        });
+                        let comparison = editingBase.current;
+                        let merged = latest;
+                        // Preserve each uncertain submission, then edits made after it.
+                        for (const pending of uncertainOrganize.current) {
+                          const submitted = structuredClone(pending);
+                          merged = await mergeShortcutBoard(
+                            comparison,
+                            submitted.board,
+                            merged,
+                            submitted.deletedLinkIds,
+                            submitted.automaticLinkGroups,
+                            submitted.deletedGroupIds,
+                            submitted.movedLinkOrigins,
+                            submitted.reorderedLinkGroups,
+                          );
+                          comparison = submitted.board;
+                        }
+                        setDraft(
+                          await mergeShortcutBoard(
+                            comparison,
+                            draft,
+                            merged,
+                            deletedLinkIds.current,
+                            automaticLinkGroups.current,
+                            deletedGroupIds.current,
+                            movedLinkOrigins.current,
+                            reorderedLinkGroups.current,
+                          ),
                         );
-                        comparison = submitted.board;
+                        editingBase.current = structuredClone(latest);
+                        uncertainOrganize.current = [];
+                        setConflict(false);
+                        mutation.reset();
+                      } catch (error) {
+                        setMergeError(
+                          error instanceof Error
+                            ? error.message
+                            : "최신 변경을 합치지 못했습니다. 다시 시도하세요.",
+                        );
+                      } finally {
+                        setMerging(false);
                       }
-                      setDraft(
-                        reconcileShortcutBoard(
-                          comparison,
-                          draft,
-                          merged,
-                          deletedLinkIds.current,
-                          automaticLinkGroups.current,
-                          deletedGroupIds.current,
-                          movedLinkOrigins.current,
-                          reorderedLinkGroups.current,
-                        ),
-                      );
-                      editingBase.current = structuredClone(latest);
-                      uncertainOrganize.current = [];
-                      setConflict(false);
-                      mutation.reset();
                       return;
                     }
                     const submitted: OrganizeSubmission = structuredClone({
@@ -270,7 +281,13 @@ function ShortcutsPage() {
                 }}
               >
                 <Check aria-hidden />
-                {mutation.isPending ? "저장 중…" : conflict ? "최신 변경과 합치기" : "저장"}
+                {merging
+                  ? "합치는 중…"
+                  : mutation.isPending
+                    ? "저장 중…"
+                    : conflict
+                      ? "최신 변경과 합치기"
+                      : "저장"}
               </Button>
             </>
           ) : (
@@ -281,6 +298,7 @@ function ShortcutsPage() {
                 disabled={!board || busy}
                 onClick={() => {
                   mutation.reset();
+                  setMergeError(null);
                   editingBase.current = structuredClone(board!);
                   uncertainOrganize.current = [];
                   deletedLinkIds.current.clear();
@@ -309,6 +327,11 @@ function ShortcutsPage() {
         <p className="mb-5 rounded-lg bg-secondary px-4 py-3 text-sm text-secondary-foreground">
           이동 손잡이를 드래그해 순서와 분류를 바꾼 뒤 저장하세요. 키보드는 손잡이에서 스페이스 키와
           방향키를 사용합니다.
+        </p>
+      )}
+      {editing && mergeError && (
+        <p role="alert" className="mb-5 text-sm text-destructive">
+          {mergeError}
         </p>
       )}
       {query.isLoading && (
