@@ -1192,21 +1192,21 @@ it("지원 한도 200개 자동 배치를 반복 전체 정렬 없이 병합한�
     placements,
     deletedGroups,
   );
-  expect(performance.now() - started).toBeLessThan(5000);
+  expect(performance.now() - started).toBeLessThan(250);
   expect(merged.groups[0]!.links).toEqual(latest.groups[0]!.links);
   const updated = structuredClone(latest);
   updated.revision++;
   updated.groups[1]!.name = "서버 수정";
   started = performance.now();
   merged = reconcileShortcutBoard(latest, merged, updated, new Set(), placements, deletedGroups);
-  expect(performance.now() - started).toBeLessThan(5000);
+  expect(performance.now() - started).toBeLessThan(250);
   expect(merged.groups[0]!.name).toBe("서버 수정");
   const replaced = structuredClone(updated);
   replaced.revision++;
   replaced.groups[0]!.links[199] = { id: "new", name: "새 이웃", url: "https://example.com/new" };
   started = performance.now();
   merged = reconcileShortcutBoard(updated, merged, replaced, new Set(), placements, deletedGroups);
-  expect(performance.now() - started).toBeLessThan(5000);
+  expect(performance.now() - started).toBeLessThan(250);
   expect(merged.groups[0]!.links).toEqual(replaced.groups[0]!.links);
   const expected = merged.groups[0]!.links.map((link) => link.id);
   expect(placements.size).toBe(200);
@@ -1267,3 +1267,31 @@ it.each(["retained", "missing", "server-move", "deleted"])(
     expect(third.groups.some((group) => group.id === "c")).toBe(false);
   },
 );
+
+it.each([50, 100, 200])("%i개 링크의 순서·분류 속성 충돌을 지연 없이 병합한다", (count) => {
+  const links = Array.from({ length: count }, (_, index) => ({
+    id: `item-${index}`,
+    name: `항목 ${index}`,
+    url: `https://example.com/${index}`,
+  }));
+  const base: ShortcutBoard = {
+    revision: 1,
+    groups: [{ id: "a", name: "A", collapsed: false, links }],
+  };
+  const draft = structuredClone(base);
+  const latest = structuredClone(base);
+  draft.groups[0]!.links = [...links.slice(count / 2), ...links.slice(0, count / 2)];
+  latest.groups[0]!.links.reverse();
+  let started = performance.now();
+  const merged = reconcileShortcutBoard(base, draft, latest);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(merged.groups[0]!.links).toEqual(latest.groups[0]!.links);
+  draft.groups[0]!.links = links;
+  latest.groups[0]!.links = links;
+  draft.groups[0]!.name = "수정 이름";
+  started = performance.now();
+  const unchangedOrder = reconcileShortcutBoard(base, draft, latest);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(unchangedOrder.groups[0]!.links).toEqual(links);
+  expect(unchangedOrder.groups[0]!.name).toBe("수정 이름");
+});
